@@ -21,6 +21,9 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, reporter_id TEXT NOT NULL, message_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', owner_id TEXT NOT NULL, primary_chat_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS group_members (group_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member', PRIMARY KEY (group_id, user_id));
+  CREATE TABLE IF NOT EXISTS sticker_packs (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, title TEXT NOT NULL, author TEXT NOT NULL, visibility TEXT NOT NULL DEFAULT 'private', share_code TEXT NOT NULL UNIQUE, cover_sticker_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS stickers (id TEXT PRIMARY KEY, pack_id TEXT NOT NULL, owner_id TEXT NOT NULL, name TEXT NOT NULL, mime_type TEXT NOT NULL, data_url TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS installed_sticker_packs (user_id TEXT NOT NULL, pack_id TEXT NOT NULL, PRIMARY KEY (user_id, pack_id));
 `)
 function addColumn(table: string, definition: string) {
   const column = definition.split(' ')[0]
@@ -60,6 +63,8 @@ for (const chatId of ['nanda-mark', 'design-circle', 'nanda-alisher', 'saved-nan
 }
 db.prepare("INSERT OR IGNORE INTO groups (id, title, description, owner_id, primary_chat_id) VALUES ('design-circle', 'Design circle', 'A calm place for thoughtful product reviews.', 'nanda', 'design-circle')").run()
 for (const [id] of users) db.prepare("INSERT OR IGNORE INTO group_members (group_id, user_id, role) VALUES ('design-circle', ?, ?)").run(id, id === 'nanda' ? 'owner' : 'member')
+db.prepare("INSERT OR IGNORE INTO sticker_packs (id, owner_id, title, author, visibility, share_code) VALUES ('chettik-starters', 'nanda', 'Chettik starters', 'Chettik', 'public', 'CHETTIK1')").run()
+db.prepare("INSERT OR IGNORE INTO stickers (id, pack_id, owner_id, name, mime_type, data_url, position) VALUES ('chettik-heart', 'chettik-starters', 'nanda', 'Crimson heart', 'image/svg+xml', ?, 0)").run('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Ctext y=".9em" font-size="90"%3E❤️%3C/text%3E%3C/svg%3E')
 const seedMessage = db.prepare('INSERT OR IGNORE INTO messages (id, chat_id, sender_id, text, kind) VALUES (?, ?, ?, ?, ?)')
 seedMessage.run('seed-mark-1', 'nanda-mark', 'mark', 'I tried the new onboarding flow. It feels really calm.', 'text')
 seedMessage.run('seed-nanda-1', 'nanda-mark', 'nanda', 'That was the idea. Less noise, more space for people.', 'text')
@@ -292,6 +297,41 @@ app.post('/api/users/:userId/block', (request, response) => {
   if (user.id === request.params.userId) return response.status(400).json({ error: 'Cannot block yourself' })
   db.prepare('INSERT OR IGNORE INTO blocked_users (user_id, blocked_user_id) VALUES (?, ?)').run(user.id, request.params.userId)
   response.status(201).json({ ok: true })
+})
+app.get('/api/sticker-packs', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  response.json(db.prepare(`SELECT p.*, EXISTS(SELECT 1 FROM installed_sticker_packs i WHERE i.pack_id = p.id AND i.user_id = ?) AS installed FROM sticker_packs p WHERE p.owner_id = ? OR p.visibility = 'public' OR EXISTS(SELECT 1 FROM installed_sticker_packs i WHERE i.pack_id = p.id AND i.user_id = ?) ORDER BY p.created_at DESC`).all(user.id, user.id, user.id))
+})
+app.get('/api/sticker-packs/:packId/stickers', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const access = db.prepare(`SELECT 1 FROM sticker_packs p WHERE p.id = ? AND (p.owner_id = ? OR p.visibility = 'public' OR EXISTS(SELECT 1 FROM installed_sticker_packs i WHERE i.pack_id = p.id AND i.user_id = ?))`).get(request.params.packId, user.id, user.id)
+  if (!access) return response.status(403).json({ error: 'Sticker pack is not available' })
+  response.json(db.prepare('SELECT id, pack_id, name, mime_type, data_url, position FROM stickers WHERE pack_id = ? ORDER BY position, created_at').all(request.params.packId))
+})
+app.post('/api/sticker-packs', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const { title, author = user.name, visibility = 'private' } = request.body as { title?: string; author?: string; visibility?: string }
+  if (!title?.trim() || title.length > 80 || !['private', 'unlisted', 'public'].includes(visibility)) return response.status(400).json({ error: 'Provide a valid pack title and visibility' })
+  const pack = { id: randomUUID(), title: title.trim(), author: author.slice(0, 80), visibility, shareCode: randomUUID().slice(0, 8) }
+  db.prepare('INSERT INTO sticker_packs (id, owner_id, title, author, visibility, share_code) VALUES (?, ?, ?, ?, ?, ?)').run(pack.id, user.id, pack.title, pack.author, pack.visibility, pack.shareCode)
+  db.prepare('INSERT INTO installed_sticker_packs (user_id, pack_id) VALUES (?, ?)').run(user.id, pack.id)
+  response.status(201).json(pack)
+})
+app.post('/api/sticker-packs/:packId/stickers', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const { name, mimeType, dataUrl } = request.body as { name?: string; mimeType?: string; dataUrl?: string }
+  const owns = db.prepare('SELECT 1 FROM sticker_packs WHERE id = ? AND owner_id = ?').get(request.params.packId, user.id)
+  if (!owns || !name || !mimeType || !dataUrl || !['image/png', 'image/webp', 'image/gif'].includes(mimeType) || dataUrl.length > 1_500_000) return response.status(400).json({ error: 'Use a PNG, WebP, or GIF sticker up to 1 MB' })
+  const id = randomUUID()
+  db.prepare('INSERT INTO stickers (id, pack_id, owner_id, name, mime_type, data_url, position) VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(position) + 1 FROM stickers WHERE pack_id = ?), 0))').run(id, request.params.packId, user.id, name.slice(0, 120), mimeType, dataUrl, request.params.packId)
+  response.status(201).json({ id, packId: request.params.packId, name, mimeType, dataUrl })
+})
+app.post('/api/sticker-packs/:packId/install', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const pack = db.prepare("SELECT 1 FROM sticker_packs WHERE id = ? AND visibility != 'private'").get(request.params.packId)
+  if (!pack) return response.status(404).json({ error: 'Public or unlisted pack not found' })
+  db.prepare('INSERT OR IGNORE INTO installed_sticker_packs (user_id, pack_id) VALUES (?, ?)').run(user.id, request.params.packId)
+  response.status(204).end()
 })
 
 const httpServer = createServer(app)

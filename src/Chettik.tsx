@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, ChevronLeft, CircleUserRound, Flag, Forward, Lock, Menu, MessageCircle, Moon, MoreHorizontal, Paperclip, Pencil, Pin, Plus, QrCode, Search, Send, Settings, ShieldCheck, ShieldAlert, Smile, Sun, Trash2, Users, X } from 'lucide-react'
+import { ArrowRight, Check, ChevronLeft, CircleUserRound, Flag, Forward, Lock, Menu, MessageCircle, Moon, MoreHorizontal, Paperclip, Pencil, Pin, Plus, QrCode, Search, Send, Settings, ShieldCheck, ShieldAlert, Smile, Sun, Trash2, Users, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { SettingsDrawer } from './Stage3Panels'
@@ -25,8 +25,8 @@ export const seedAccounts: Account[] = [
 ]
 
 type Language = 'EN' | 'RU'
-type MessageKind = 'text' | 'voice' | 'poll' | 'location' | 'circle' | 'media'
-type Message = { id: string; sender: string; text: string; time: string; mine: boolean; reactions: string[]; pinned?: boolean; edited?: boolean; replyTo?: string; kind?: MessageKind; pollVotes?: number; voted?: boolean; mediaExpiry?: MediaExpiry; opened?: boolean }
+type MessageKind = 'text' | 'voice' | 'poll' | 'location' | 'circle' | 'media' | 'sticker'
+type Message = { id: string; sender: string; text: string; time: string; mine: boolean; reactions: string[]; pinned?: boolean; edited?: boolean; replyTo?: string; kind?: MessageKind; pollVotes?: number; voted?: boolean; mediaExpiry?: MediaExpiry; opened?: boolean; stickerUrl?: string }
 export type ChatName = string
 type ChatMessages = Record<ChatName, Message[]>
 export type Audience = 'Everybody' | 'Contacts' | 'Nobody'
@@ -146,6 +146,9 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const [reply, setReply] = useState<Message | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
   const [emojiOpen, setEmojiOpen] = useState(false)
+  const [pickerTab, setPickerTab] = useState<'emoji' | 'stickers' | 'gifs'>('emoji')
+  const [stickers, setStickers] = useState<Array<{ id: string; name: string; data_url: string; mime_type: string }>>([])
+  const [stickerPackId, setStickerPackId] = useState('chettik-starters')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [richOpen, setRichOpen] = useState(false)
@@ -168,6 +171,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const [menuStub, setMenuStub] = useState<string | null>(null)
   const [chatListWidth, setChatListWidth] = useState(() => Number(localStorage.getItem('chettik-chat-list-width')) || 300)
   const fileInput = useRef<HTMLInputElement>(null)
+  const stickerInput = useRef<HTMLInputElement>(null)
   const messages = chatMessages[selectedChat]
   const logout = () => {
     if (token) void fetch(`${API_URL}/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
@@ -216,9 +220,24 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
         return { ...(fallback || fallbackChats[0]), id: item.id, name: item.title, preview: item.preview || fallback?.preview || '', time: item.last_message_at ? new Date(item.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '', unread: 0 }
       })
       setChatRows(rows)
+      const packsResponse = await fetch(`${API_URL}/sticker-packs`, { headers })
+      const packs = packsResponse.ok ? await packsResponse.json() as Array<{ id: string }> : []
+      const packId = packs[0]?.id || 'chettik-starters'
+      setStickerPackId(packId)
+      const stickersResponse = await fetch(`${API_URL}/sticker-packs/${packId}/stickers`, { headers })
+      if (stickersResponse.ok) setStickers(await stickersResponse.json())
       const entries = await Promise.all(rows.map(async row => [row.name, await (await fetch(`${API_URL}/chats/${row.id}/messages`, { headers })).json()] as const))
       if (disposed) return
-      setChatMessages(current => ({ ...current, ...Object.fromEntries(entries.map(([name, remote]) => [name, (remote as Array<{ id: string; sender_name: string; text: string; kind: MessageKind; created_at: string }>).map(item => ({ id: item.id, sender: item.sender_name, text: item.text, time: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), mine: item.sender_name === account.name, reactions: [], kind: item.kind === 'text' ? undefined : item.kind }))])) }))
+      setChatMessages(current => ({
+        ...current,
+        ...Object.fromEntries(entries.map(([name, remote]) => {
+          const loaded = (remote as Array<{ id: string; sender_name: string; text: string; kind: MessageKind; metadata_json: string; created_at: string }>).map(item => {
+            const metadata = JSON.parse(item.metadata_json || '{}') as { mediaExpiry?: MediaExpiry; stickerUrl?: string }
+            return { id: item.id, sender: item.sender_name, text: item.text, time: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), mine: item.sender_name === account.name, reactions: [], kind: item.kind === 'text' ? undefined : item.kind, mediaExpiry: metadata.mediaExpiry, stickerUrl: metadata.stickerUrl }
+          })
+          return [name, loaded]
+        })),
+      }))
     }
     connect().catch(() => undefined)
     return () => { disposed = true }
@@ -305,20 +324,20 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     else if (action.startsWith('react-')) setMessages(old => old.map(item => item.id === selected.id ? { ...item, reactions: [...item.reactions, action.slice(6)] } : item))
     setMessageMenu(null)
   }
-  const deliver = async (rawText: string, kind: MessageKind = 'text', mediaExpiry?: MediaExpiry) => {
+  const deliver = async (rawText: string, kind: MessageKind = 'text', mediaExpiry?: MediaExpiry, stickerUrl?: string) => {
     const text = rawText.trim()
     if (!text || text.length > 4000) return
     const chat = chatRows.find(row => row.name === selectedChat)
     if (!chat) return
     if (chat.secret) {
-      setMessages(old => [...old, { id: crypto.randomUUID(), mine: true, sender: account.name, text, time: 'now', reactions: [], kind, mediaExpiry }])
+      setMessages(old => [...old, { id: crypto.randomUUID(), mine: true, sender: account.name, text, time: 'now', reactions: [], kind, mediaExpiry, stickerUrl }])
       return
     }
     if (!token) return
-    const response = await fetch(`${API_URL}/chats/${chat.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ text, kind, metadata: mediaExpiry ? { mediaExpiry } : undefined }) })
+    const response = await fetch(`${API_URL}/chats/${chat.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ text, kind, metadata: { ...(mediaExpiry ? { mediaExpiry } : {}), ...(stickerUrl ? { stickerUrl } : {}) } }) })
     const remote = await response.json() as { id: string; created_at: string }
     if (!response.ok) return
-    setMessages(old => old.some(item => item.id === remote.id) ? old : [...old, { id: remote.id, mine: true, sender: account.name, text, time: new Date(remote.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), reactions: [], replyTo: reply?.text, kind: kind === 'text' ? undefined : kind, mediaExpiry }])
+    setMessages(old => old.some(item => item.id === remote.id) ? old : [...old, { id: remote.id, mine: true, sender: account.name, text, time: new Date(remote.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), reactions: [], replyTo: reply?.text, kind: kind === 'text' ? undefined : kind, mediaExpiry, stickerUrl }])
   }
   const send = async () => {
     const text = message.trim()
@@ -332,6 +351,19 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     setEditing(null)
   }
   const attach = (file?: File) => { if (!file) return; if (file.type.startsWith('image/') || file.type.startsWith('video/')) setMediaFile(file); else void deliver(`📎 ${file.name} · ${Math.ceil(file.size / 1024)} KB`) }
+  const uploadSticker = async (file?: File) => {
+    if (!file || !['image/png', 'image/webp', 'image/gif'].includes(file.type) || file.size > 1_000_000 || !token) return
+    const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file) })
+    let packId = stickerPackId
+    if (packId === 'chettik-starters') {
+      const created = await fetch(`${API_URL}/sticker-packs`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ title: 'My stickers', author: account.name, visibility: 'private' }) })
+      if (!created.ok) return
+      packId = (await created.json() as { id: string }).id
+      setStickerPackId(packId)
+    }
+    const response = await fetch(`${API_URL}/sticker-packs/${packId}/stickers`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ name: file.name, mimeType: file.type, dataUrl }) })
+    if (response.ok) { const sticker = await response.json() as { id: string; name: string; data_url: string; mime_type: string }; setStickers(current => [...current, sticker]) }
+  }
   const deleteMessage = async (id: string) => {
     const response = await fetch(`${API_URL}/messages/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
     if (response.ok) setMessages(old => old.filter(message => message.id !== id))
@@ -345,11 +377,11 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       <section className="chat">
         <header className="chat-head"><button className="icon-btn mobile-menu" aria-label="Open main menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>{selectedChat === 'Mark' ? <><button className="icon-btn profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><div className="avatar" style={{ background: '#6e4c97' }}>M</div></button><button className="chat-person profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><strong>Mark <span className="badge">ADMIN</span></strong><span>online · cloud chat</span></button></> : <><div className="avatar" style={{ background: selectedChat === 'Saved Messages' ? account.color : chatRows.find(chat => chat.name === selectedChat)?.color }}>{selectedChat === 'Saved Messages' ? account.initials : selectedChat[0]}</div><button className="chat-person profile-open" onClick={() => selectedChat === 'Design circle' && setGroupOpen(true)}><strong>{selectedChat}</strong><span>{selectedChat === 'Saved Messages' ? 'Messages saved for yourself' : selectedChat === 'Design circle' ? '3 members · group chat' : 'cloud chat'}</span></button></>}<div className="head-actions">{selectedChat === 'Design circle' && <button className="icon-btn" aria-label="Open group menu" onClick={() => setGroupMenuOpen(true)}><MoreHorizontal size={19} /></button>}<button className="icon-btn" title="Switch language" onClick={onLanguage}>{language}</button><button className="icon-btn" aria-label="Toggle theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header>
         <div className="mobile-stories stories" aria-label={language === 'RU' ? 'Истории' : 'Stories'}>{[{ name: 'Mark', initials: 'M', color: '#6e4c97' }, { name: 'Nanda', initials: 'N', color: '#9e2338' }, { name: 'Alisher', initials: 'A', color: '#bf8057' }].map(story => <button className="story" key={story.name} onClick={() => setStoryOpen(story.name)}><span className="avatar" style={{ background: story.color }}>{story.initials}</span><span>{story.name}</span></button>)}</div>
-        <div className="messages" aria-live="polite"><div className="date">{language === 'RU' ? 'Сегодня' : 'Today'}</div>{matches.map(item => <div onContextMenu={event => { event.preventDefault(); setMessageMenu(item) }} className={`message ${item.mine ? 'mine' : ''}`} key={item.id}><div className="avatar" style={{ background: item.mine ? account.color : '#6e4c97' }}>{item.mine ? account.initials : 'M'}</div><div className={`bubble ${item.kind ? `bubble-${item.kind}` : ''}`}>{item.replyTo && <small className="reply-ref">↳ {item.replyTo}</small>}<span className="sender">{item.sender}</span>{item.kind === 'voice' ? <div className="voice-message"><span className="voice-wave">▁▃▆▇▅▇▃▂</span><strong>{item.text}</strong></div> : item.kind === 'circle' ? <div className="circle-message"><span>▶</span><small>{item.text}</small></div> : item.kind === 'media' ? <button className="timed-media" aria-label="Open timed media" onClick={() => { if (item.mediaExpiry === 'once') setMessages(old => old.filter(message => message.id !== item.id)); else if (item.mediaExpiry && item.mediaExpiry !== 'never') { setMessages(old => old.map(message => message.id === item.id ? { ...message, opened: true } : message)); window.setTimeout(() => setMessages(old => old.filter(message => message.id !== item.id)), Number(item.mediaExpiry) * 1000) } }}><span>▧</span><strong>{item.opened ? 'Media opened' : item.text}</strong><small>{item.mediaExpiry === 'once' ? '1 · View once' : item.mediaExpiry === 'never' || !item.mediaExpiry ? 'Saved media' : `${item.mediaExpiry}s · tap to view`}</small></button> : item.kind === 'location' ? <div className="location-message"><span>⌖</span><strong>{item.text}</strong><small>Private chat location</small></div> : item.kind === 'poll' ? <div className="poll-message"><strong>{item.text}</strong><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted, pollVotes: (m.pollVotes || 0) + (m.voted ? -1 : 1) } : m))}>{item.voted ? '✓ Yes, works for me' : 'Yes, works for me'} <em>{item.pollVotes || 0}</em></button><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted } : m))}>Need another time</button><small>{item.pollVotes || 0} votes · public in this chat</small></div> : item.text}<div className="message-tools"><button onClick={() => setReply(item)} title="Reply"><ArrowLeft size={12} /></button><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, reactions: [...m.reactions, '❤️'] } : m))}>❤️ {item.reactions.length || ''}</button><button title="Forward" onClick={() => setForwardMessage(item)}><Forward size={12} /></button><button title="Pin" onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, pinned: !m.pinned } : m))}><Pin size={12} /></button>{item.mine && item.kind === undefined && <button aria-label="Edit message" onClick={() => { setEditing(item); setMessage(item.text); setReply(null) }}><Pencil size={12} /></button>}<button aria-label="Report message" onClick={() => setConfirm({ action: 'report', message: item })}><Flag size={12} /></button>{item.mine && <button aria-label="Delete message" onClick={() => setConfirm({ action: 'delete-message', message: item })}><Trash2 size={12} /></button>}</div><span className="meta">{item.pinned ? '📌 ' : ''}{item.time} {item.edited ? 'edited' : ''} {item.mine ? '✓✓' : ''}</span></div></div>)}</div>
+        <div className="messages" aria-live="polite"><div className="date">{language === 'RU' ? 'Сегодня' : 'Today'}</div>{matches.map(item => <div onContextMenu={event => { event.preventDefault(); setMessageMenu(item) }} className={`message ${item.mine ? 'mine' : ''}`} key={item.id}><div className="avatar" style={{ background: item.mine ? account.color : '#6e4c97' }}>{item.mine ? account.initials : 'M'}</div><div className={`bubble ${item.kind ? `bubble-${item.kind}` : ''}`}>{item.replyTo && <small className="reply-ref">↳ {item.replyTo}</small>}{item.kind !== 'sticker' && <span className="sender">{item.sender}</span>}{item.kind === 'sticker' ? <img className="sticker-message" src={item.stickerUrl} alt={item.text} /> : item.kind === 'voice' ? <div className="voice-message"><span className="voice-wave">▁▃▆▇▅▇▃▂</span><strong>{item.text}</strong></div> : item.kind === 'circle' ? <div className="circle-message"><span>▶</span><small>{item.text}</small></div> : item.kind === 'media' ? <button className="timed-media" aria-label="Open timed media" onClick={() => { if (item.mediaExpiry === 'once') setMessages(old => old.filter(message => message.id !== item.id)); else if (item.mediaExpiry && item.mediaExpiry !== 'never') { setMessages(old => old.map(message => message.id === item.id ? { ...message, opened: true } : message)); window.setTimeout(() => setMessages(old => old.filter(message => message.id !== item.id)), Number(item.mediaExpiry) * 1000) } }}><span>▧</span><strong>{item.opened ? 'Media opened' : item.text}</strong><small>{item.mediaExpiry === 'once' ? '1 · View once' : item.mediaExpiry === 'never' || !item.mediaExpiry ? 'Saved media' : `${item.mediaExpiry}s · tap to view`}</small></button> : item.kind === 'location' ? <div className="location-message"><span>⌖</span><strong>{item.text}</strong><small>Private chat location</small></div> : item.kind === 'poll' ? <div className="poll-message"><strong>{item.text}</strong><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted, pollVotes: (m.pollVotes || 0) + (m.voted ? -1 : 1) } : m))}>{item.voted ? '✓ Yes, works for me' : 'Yes, works for me'} <em>{item.pollVotes || 0}</em></button><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted } : m))}>Need another time</button><small>{item.pollVotes || 0} votes · public in this chat</small></div> : item.text}<div className="message-tools" /><span className="meta">{item.time} {item.mine ? '✓✓' : ''}</span></div></div>)}</div>
         <form className={`compose ${editing ? 'editing' : ''}`} onSubmit={(e) => { e.preventDefault(); send() }}>
           {(reply || editing) && <div className="compose-context"><Pencil size={17} /><span><strong>{editing ? 'Edit message' : 'Replying to Mark'}</strong><small>{(editing || reply)?.text.slice(0, 72)}</small></span><button type="button" onClick={() => { setEditing(null); setReply(null); setMessage('') }}><X size={17} /></button></div>}
-          <input ref={fileInput} type="file" hidden onChange={e => { attach(e.target.files?.[0]); e.currentTarget.value = '' }} /><button className="icon-btn" type="button" title="Attach file" onClick={() => fileInput.current?.click()}><Paperclip size={19} /></button><button className="icon-btn rich-trigger" type="button" aria-label="Open rich message tools" onClick={() => setRichOpen(true)}><Plus size={19} /></button><input aria-label="Message text" maxLength={4000} value={message} onChange={e => setMessage(e.target.value)} placeholder={language === 'RU' ? 'Написать сообщение…' : 'Write a message…'} /><button className="icon-btn" type="button" aria-label="Open emoji picker" onClick={() => setEmojiOpen(!emojiOpen)}><Smile size={19} /></button>{!message && !editing ? <VoiceButton mode={recordingMode} active={recording} onModeToggle={() => setRecordingMode(mode => mode === 'voice' ? 'circle' : 'voice')} onStart={startRecording} onStop={stopRecording} /> : <button className="send" aria-label={editing ? 'Save message' : 'Send message'}>{editing ? <Check size={18} /> : <Send size={17} />}</button>}
-          {emojiOpen && <div className="emoji-picker"><div className="emoji-tabs"><button className="active">Emoji</button><button>Stickers</button><button>GIFs</button></div><input aria-label="Search emoji" placeholder="Search emoji" readOnly /><div className="emoji-grid">{['😀','😂','🥰','😍','😎','🤝','❤️','🔥','✨','👍','🙏','🎉','💬','🌙','🚀','🍒','✅','🤍','🤔','👏','🎈','💯','🫶','😌'].map(emoji => <button key={emoji} type="button" onClick={() => { setMessage(m => `${m}${emoji}`); setEmojiOpen(false) }}>{emoji}</button>)}</div></div>}
+          <input ref={fileInput} type="file" hidden onChange={e => { attach(e.target.files?.[0]); e.currentTarget.value = '' }} /><input ref={stickerInput} type="file" hidden accept="image/png,image/webp,image/gif" onChange={e => { void uploadSticker(e.target.files?.[0]); e.currentTarget.value = '' }} /><button className="icon-btn" type="button" title="Attach file" onClick={() => fileInput.current?.click()}><Paperclip size={19} /></button><button className="icon-btn rich-trigger" type="button" aria-label="Open rich message tools" onClick={() => setRichOpen(true)}><Plus size={19} /></button><input aria-label="Message text" maxLength={4000} value={message} onChange={e => setMessage(e.target.value)} placeholder={language === 'RU' ? 'Написать сообщение…' : 'Write a message…'} /><button className="icon-btn" type="button" aria-label="Open emoji picker" onClick={() => setEmojiOpen(!emojiOpen)}><Smile size={19} /></button>{!message && !editing ? <VoiceButton mode={recordingMode} active={recording} onModeToggle={() => setRecordingMode(mode => mode === 'voice' ? 'circle' : 'voice')} onStart={startRecording} onStop={stopRecording} /> : <button className="send" aria-label={editing ? 'Save message' : 'Send message'}>{editing ? <Check size={18} /> : <Send size={17} />}</button>}
+          {emojiOpen && <div className="emoji-picker"><div className="emoji-tabs"><button className={pickerTab === 'emoji' ? 'active' : ''} onClick={() => setPickerTab('emoji')}>Emoji</button><button className={pickerTab === 'stickers' ? 'active' : ''} onClick={() => setPickerTab('stickers')}>Stickers</button><button className={pickerTab === 'gifs' ? 'active' : ''} onClick={() => setPickerTab('gifs')}>GIFs</button></div>{pickerTab === 'emoji' ? <><input aria-label="Search emoji" placeholder="Search emoji" readOnly /><div className="emoji-grid">{['😀','😂','🥰','😍','😎','🤝','❤️','🔥','✨','👍','🙏','🎉','💬','🌙','🚀','🍒','✅','🤍','🤔','👏','🎈','💯','🫶','😌'].map(emoji => <button key={emoji} type="button" onClick={() => { setMessage(m => `${m}${emoji}`); setEmojiOpen(false) }}>{emoji}</button>)}</div></> : pickerTab === 'stickers' ? <div className="sticker-picker"><button className="sticker-upload" type="button" onClick={() => stickerInput.current?.click()}>+ Add PNG, WebP or GIF</button><div className="sticker-grid">{stickers.map(sticker => <button key={sticker.id} type="button" aria-label={`Send ${sticker.name}`} onClick={() => { void deliver(sticker.name, 'sticker', undefined, sticker.data_url); setEmojiOpen(false) }}><img src={sticker.data_url} alt={sticker.name} /></button>)}</div></div> : <p className="picker-empty">GIF search is coming soon.</p>}</div>}
         </form>
         <nav className="mobile-nav"><button className="active"><MessageCircle size={19} />Chats</button><button onClick={() => setSettingsOpen(true)}><CircleUserRound size={19} />Profile</button><button onClick={() => setSettingsOpen(true)}><Settings size={19} />Settings</button></nav>
       </section>
