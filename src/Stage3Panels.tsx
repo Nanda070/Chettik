@@ -2,12 +2,12 @@ import { ArrowLeft, Bell, Camera, Check, ChevronRight, ContactRound, Fingerprint
 import { useState } from 'react'
 import type { Account, Audience, Profile } from './Chettik'
 
-type Props = { account: Account; profile: Profile; setProfile: (profile: Profile) => void; dark: boolean; setDark: (value: boolean) => void; language: 'EN' | 'RU'; onLanguage: () => void; onClose: () => void; onLogout: () => void }
+type Props = { account: Account; profile: Profile; setProfile: (profile: Profile) => void; dark: boolean; setDark: (value: boolean) => void; language: 'EN' | 'RU'; onLanguage: () => void; onDelivery: () => void; onClose: () => void; onLogout: () => void }
 type Panel = 'main' | 'privacy' | 'security' | 'devices' | 'qr' | 'appearance' | 'profile'
 const labels: Record<string, string> = { phone: 'Phone number', lastSeen: 'Last seen & online', photo: 'Profile photos', bio: 'Bio', birthday: 'Birthday', forwards: 'Forwarded messages', voice: 'Voice messages', messages: 'Messages' }
 const devices = [{ name: 'Windows • Chrome', detail: 'Current session · 127.0.0.1', icon: Laptop, current: true }, { name: 'Android 15', detail: 'Moscow, Russia · 2 hours ago', icon: Smartphone }, { name: 'MacBook Pro', detail: 'Zurich, Switzerland · Aug 14', icon: MonitorSmartphone }]
 
-export function SettingsDrawer({ account, profile, setProfile, dark, setDark, language, onLanguage, onClose, onLogout }: Props) {
+export function SettingsDrawer({ account, profile, setProfile, dark, setDark, language, onLanguage, onDelivery, onClose, onLogout }: Props) {
   const [panel, setPanel] = useState<Panel>('main')
   const [audienceKey, setAudienceKey] = useState('lastSeen')
   const set = (patch: Partial<Profile>) => setProfile({ ...profile, ...patch })
@@ -18,7 +18,7 @@ export function SettingsDrawer({ account, profile, setProfile, dark, setDark, la
     <aside className="tg-panel">
       <header className="tg-panel-head"><button className="icon-btn" aria-label={panel === 'main' ? 'Close settings' : 'Back'} onClick={() => panel === 'main' ? onClose() : setPanel('main')}>{panel === 'main' ? <X size={21} /> : <ArrowLeft size={21} />}</button><strong>{title}</strong></header>
       {panel === 'main' && <><button className="tg-profile" onClick={() => setPanel('profile')}><span className="avatar profile-avatar" style={{ background: account.color }}>{account.initials}</span><span><strong>{account.name}</strong><small>{account.phone}</small><small>{account.username}</small></span><ChevronRight size={19} /></button><div className="tg-section">Settings</div><div className="tg-list">
-        {row(<Bell size={19} />, 'Notifications and sounds', 'Message and call notifications', () => {})}
+        {row(<Bell size={19} />, language === 'RU' ? 'Доставка и уведомления' : 'Delivery and notifications', profile.pushEnabled ? (language === 'RU' ? 'Уведомления включены' : 'Notifications on') : (language === 'RU' ? 'Настройка PWA и приватности' : 'PWA and privacy controls'), onDelivery)}
         {row(<LockKeyhole size={19} />, 'Privacy and Security', 'Blocked users, passcode, devices', () => setPanel('privacy'))}
         {row(<MonitorSmartphone size={19} />, 'Devices', '3 active sessions', () => setPanel('devices'))}
         {row(<Languages size={19} />, 'Language', language === 'RU' ? 'Русский' : 'English', onLanguage)}

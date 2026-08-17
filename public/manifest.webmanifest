@@ -1,0 +1,12 @@
+{
+  "name": "Chettik — private messenger",
+  "short_name": "Chettik",
+  "description": "A calm, privacy-first messenger.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#161112",
+  "theme_color": "#9e2338",
+  "icons": [
+    { "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
