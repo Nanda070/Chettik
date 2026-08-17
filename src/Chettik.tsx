@@ -1,4 +1,4 @@
-import { ArrowRight, Check, ChevronLeft, Moon, ShieldCheck, Sun } from 'lucide-react'
+import { ArrowRight, Bell, Check, ChevronLeft, CircleUserRound, Compass, Menu, MessageCircle, Moon, MoreHorizontal, Paperclip, Plus, Search, Send, Settings, ShieldCheck, Smile, Sun, Users } from 'lucide-react'
 import { useState } from 'react'
 import './App.css'
 
@@ -30,7 +30,7 @@ export default function Chettik() {
     ? { title: 'Тише. Ближе. По-своему.', subtitle: 'Приватность — по умолчанию. Знакомый интерфейс.', pick: 'Выберите демо-аккаунт', phone: 'или введите номер телефона', continue: 'Продолжить', secure: 'Телефон — основа личности. Сначала SMS OTP, затем fallback в Telegram.', code: 'Введите код из 6 цифр', verify: 'Подтвердить и войти', back: 'Назад' }
     : { title: 'A quieter place to be close.', subtitle: 'Private by instinct. Familiar by design.', pick: 'Choose a demo account', phone: 'or enter your phone number', continue: 'Continue', secure: 'Phone-first identity. SMS OTP with Telegram delivery fallback.', code: 'Enter the 6-digit code', verify: 'Verify & enter', back: 'Back' }
 
-  if (session) return <div className={`app ${dark ? 'dark' : ''}`}><div className="session-stub">Signed in as <strong>{session.name}</strong>. Core messenger is loading next.</div></div>
+  if (session) return <Messenger account={session} dark={dark} setDark={setDark} language={language} setLanguage={setLanguage} />
   return <main className={`auth-screen ${dark ? 'dark' : ''}`}>
     <div className="auth-ambient one" /><div className="auth-ambient two" />
     <header className="auth-header">
@@ -46,4 +46,25 @@ export default function Chettik() {
     </section>
     <footer><span>© 2026 Chettik</span><span>Terms · Privacy · Authors</span></footer>
   </main>
+}
+
+type MessengerProps = { account: Account; dark: boolean; setDark: (value: boolean) => void; language: 'EN' | 'RU'; setLanguage: (value: 'EN' | 'RU') => void }
+const chats = [
+  { name: 'Mark', preview: 'That reads much better.', time: '10:42', initials: 'M', color: '#6e4c97', unread: 2 },
+  { name: 'Design circle', preview: 'Nanda: I shared the new motion study ✨', time: '09:30', initials: 'D', color: '#4c8a83', unread: 0 },
+  { name: 'Saved Messages', preview: 'You: Remember to write this down.', time: 'Mon', initials: 'S', color: '#9e2338', unread: 0 },
+  { name: 'Alisher', preview: 'See you after work!', time: 'Sun', initials: 'A', color: '#bf8057', unread: 0 },
+]
+
+function Messenger({ account, dark, setDark, language, setLanguage }: MessengerProps) {
+  const [message, setMessage] = useState('')
+  const [messages, setMessages] = useState([{ mine: false, sender: 'Mark', text: 'I tried the new onboarding flow. It feels really calm.', time: '10:38' }, { mine: true, sender: account.name, text: 'That was the idea. Less noise, more space for people.', time: '10:40' }, { mine: false, sender: 'Mark', text: 'That reads much better. And the dark red feels like a real signature.', time: '10:42' }])
+  const send = () => { if (!message.trim()) return; setMessages([...messages, { mine: true, sender: account.name, text: message.trim(), time: 'now' }]); setMessage('') }
+  return <div className={`app ${dark ? 'dark' : ''}`}>
+    <div className="app-shell">
+      <nav className="rail"><div className="mark">C</div><button className="rail-btn active"><MessageCircle size={20} /></button><button className="rail-btn"><Users size={20} /></button><button className="rail-btn"><Compass size={20} /></button><div className="rail-spacer" /><button className="rail-btn"><Bell size={19} /></button><button className="avatar me" title={account.name}>{account.initials}</button></nav>
+      <aside className="sidebar"><div className="side-top"><div className="wordmark">chett<span>i</span>k</div><button className="icon-btn"><Plus size={19} /></button></div><div className="search"><Search size={15} /> Search messages</div><div className="stories">{['N', 'M', 'A', 'D'].map((initial, index) => <div className="story" key={initial}><div className="avatar" style={{ background: ['#9e2338', '#6e4c97', '#bf8057', '#4c8a83'][index] }}>{initial}</div><span>{['Nanda', 'Mark', 'Alisher', 'Dasha'][index]}</span></div>)}</div><div className="list-title">Direct messages</div><div className="chat-list">{chats.map((chat, i) => <button className={`chat-row ${i === 0 ? 'active' : ''}`} key={chat.name}><div className="avatar" style={{ background: chat.color }}>{chat.initials}</div><div className="chat-copy"><div className="chat-name">{chat.name}<span className="time">{chat.time}</span></div><div className="chat-preview">{chat.preview}</div></div>{chat.unread ? <span className="unread">{chat.unread}</span> : null}</button>)}</div></aside>
+      <section className="chat"><header className="chat-head"><button className="icon-btn mobile-menu"><Menu size={20} /></button><div className="avatar" style={{ background: '#6e4c97' }}>M</div><div className="chat-person"><strong>Mark <span className="badge">ADMIN</span></strong><span>online</span></div><div className="head-actions"><button className="icon-btn"><Search size={19} /></button><button className="icon-btn"><MoreHorizontal size={20} /></button><button className="icon-btn" onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header><div className="messages"><div className="date">Today</div>{messages.map((item, i) => <div className={`message ${item.mine ? 'mine' : ''}`} key={`${item.time}-${i}`}><div className="avatar" style={{ background: item.mine ? account.color : '#6e4c97' }}>{item.mine ? account.initials : 'M'}</div><div className="bubble"><span className="sender">{item.sender}</span>{item.text}<span className="meta">{item.time} {item.mine ? '✓✓' : ''}</span></div></div>)}</div><form className="compose" onSubmit={(e) => { e.preventDefault(); send() }}><button className="icon-btn" type="button"><Paperclip size={19} /></button><input value={message} onChange={e => setMessage(e.target.value)} placeholder="Write a message…" /><button className="icon-btn" type="button"><Smile size={19} /></button><button className="send" aria-label="Send message"><Send size={17} /></button></form><nav className="mobile-nav"><button className="active"><MessageCircle size={19} />Chats</button><button><CircleUserRound size={19} />Profile</button><button onClick={() => setLanguage(language === 'EN' ? 'RU' : 'EN')}><Settings size={19} />{language}</button></nav></section>
+    </div>
+  </div>
 }
