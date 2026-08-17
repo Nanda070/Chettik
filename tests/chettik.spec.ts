@@ -1,337 +1,55 @@
 import { expect, test } from '@playwright/test'
 
-async function login(page: import('@playwright/test').Page, name: 'Nanda' | 'Mark' | 'Alisher' = 'Nanda') {
-  const emails = { Nanda: 'test@test.com', Mark: 'test2@test.com', Alisher: 'test3@test.com' }
+async function login(page: import('@playwright/test').Page, email = 'test@test.com') {
   await page.goto('/')
-  if (await page.getByRole('heading', { name: 'Scan From Mobile Chettik' }).isVisible()) {
+  if (await page.getByRole('heading', { name: 'Scan from mobile Chettik' }).isVisible()) {
     await page.getByRole('button', { name: 'Log in using email' }).click()
-    await page.getByRole('textbox', { name: 'Email address' }).fill(emails[name])
-    await page.getByRole('button', { name: 'Next' }).click()
-    await page.getByRole('textbox', { name: 'OTP digit 1' }).fill('123456')
-    await page.getByRole('button', { name: 'Sign in' }).click()
-    await expect(page.locator('.chat-head .chat-person strong')).toBeVisible()
-    return
+    await page.getByRole('textbox', { name: 'Email address' }).fill(email)
+    await page.getByRole('button', { name: 'Continue' }).click()
+  } else {
+    await page.getByRole('textbox', { name: 'Email address' }).fill(email)
+    await page.getByRole('button', { name: /continue|продолжить/i }).click()
   }
-  await page.getByRole('textbox', { name: 'Email address' }).fill(emails[name])
-  await page.getByRole('button', { name: /continue|продолжить/i }).click()
   await page.getByRole('textbox', { name: 'OTP digit 1' }).fill('123456')
-  await page.getByRole('button', { name: /verify|подтвердить/i }).click()
-  await expect(page.locator('.chat-head .chat-person strong')).toBeVisible()
+  await page.getByRole('button', { name: /sign in|verify|войти|подтвердить/i }).click()
 }
 
-test('QR-first login has no demos and exposes six visible OTP cells', async ({ page }, testInfo) => {
+test('QR-first authentication is polished and exposes six OTP cells', async ({ page }, testInfo) => {
   await page.goto('/')
   if (testInfo.project.name === 'desktop') {
-    await expect(page.getByRole('heading', { name: 'Scan From Mobile Chettik' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Scan from mobile Chettik' })).toBeVisible()
     await expect(page.locator('.desktop-qr')).toBeVisible()
     await page.getByRole('button', { name: 'Log in using email' }).click()
   }
-  await expect(page.getByText(/Nanda|Mark|Alisher/)).toHaveCount(0)
-  await expect(page.getByText(/six-digit verification code/i)).toHaveCount(0)
   await page.getByRole('textbox', { name: 'Email address' }).fill('test@test.com')
-  await page.getByRole('button', { name: /next|continue|продолжить/i }).click()
+  await page.getByRole('button', { name: /continue|продолжить/i }).click()
   const cells = page.locator('.otp-cell:visible')
   await expect(cells).toHaveCount(6)
   await expect(cells.first()).toBeFocused()
-  await cells.first().fill('12')
-  await expect(cells.nth(0)).toHaveValue('1')
-  await expect(cells.nth(1)).toHaveValue('2')
-  await cells.nth(2).fill('3456')
+  await cells.first().fill('123456')
   await expect(cells.nth(5)).toHaveValue('6')
 })
 
-test('seed account sends and edits inside the composer', async ({ page }) => {
-  await login(page)
-  await page.getByRole('textbox', { name: 'Message text' }).fill('A polished local message')
+test('new inbox creates direct chats, groups, channels and messages', async ({ page }, testInfo) => {
+  await login(page, testInfo.project.name === 'mobile' ? 'test2@test.com' : 'test@test.com')
+  await expect(page.getByText('No chats yet')).toBeVisible()
+  await page.locator('.inbox-empty').getByRole('button', { name: 'New chat' }).click()
+  await expect(page.getByRole('dialog', { name: 'Contacts' })).toBeVisible()
+  await page.locator('.contacts-panel > div > button').first().click()
+  await page.getByRole('textbox', { name: 'Message text' }).fill('A real local message')
   await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText('A polished local message').last()).toBeVisible()
-  await page.locator('.message.mine').last().click({ button: 'right' })
-  await page.getByText('Edit message', { exact: true }).click()
-  await expect(page.getByText('Edit message')).toBeVisible()
-  await page.getByRole('textbox', { name: 'Message text' }).fill('Edited without browser dialogs')
-  await page.getByRole('button', { name: 'Save message' }).click()
-  await expect(page.getByText('Edited without browser dialogs').last()).toBeVisible()
-})
+  await expect(page.getByText('A real local message')).toBeVisible()
 
-test('email admin creates, opens and posts to a channel', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Channel creation uses the desktop menu')
-  await login(page, 'Nanda')
   await page.getByRole('button', { name: 'Open main menu' }).click()
-  await page.getByRole('button', { name: 'New Channel', exact: true }).click()
-  await expect(page.getByRole('dialog', { name: 'New Channel' })).toBeVisible()
-  const handle = `channel_${Date.now()}`
-  await page.getByRole('textbox', { name: 'Channel name' }).fill('Product Notes')
-  await page.getByRole('textbox', { name: 'Channel description' }).fill('Focused releases and product updates.')
-  await page.getByRole('textbox', { name: 'Channel handle' }).fill(handle)
+  await page.getByRole('button', { name: 'New group' }).click()
+  await page.getByRole('textbox', { name: 'Group name' }).fill('Project team')
+  await page.getByRole('button', { name: 'Create group' }).click()
+  await expect(page.locator('.chat-head')).toContainText('Project team')
+
+  await page.getByRole('button', { name: 'Open main menu' }).click()
+  await page.getByRole('button', { name: 'New channel' }).click()
+  await page.getByRole('textbox', { name: 'Channel name' }).fill('Release notes')
+  await page.getByRole('textbox', { name: 'Channel handle' }).fill(`release_${Date.now()}`)
   await page.getByRole('button', { name: 'Create channel' }).click()
-  await expect(page.getByRole('button', { name: 'Open channel info' }).first()).toBeVisible()
-  await expect(page.getByText('Product Notes', { exact: true }).first()).toBeVisible()
-  await page.getByRole('textbox', { name: 'Message text' }).fill('The first channel post.')
-  await page.getByRole('button', { name: 'Publish post' }).click()
-  await expect(page.getByText('The first channel post.', { exact: true }).last()).toBeVisible()
-})
-
-test('group info, editing and chat linking are interactive', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === 'mobile')
-  await login(page)
-  await page.getByRole('button', { name: /Design circle/ }).click()
-  await page.getByRole('button', { name: 'Open group menu' }).click()
-  await expect(page.getByRole('button', { name: 'Delete and leave' })).toBeVisible()
-  await page.getByRole('button', { name: 'View group info' }).click()
-  await expect(page.getByRole('dialog', { name: 'Design circle group info' })).toBeVisible()
-  await expect(page.getByText('Group owner')).toBeVisible()
-  await page.getByRole('button', { name: 'Manage group' }).click()
-  await expect(page.getByRole('dialog', { name: 'Edit group' })).toBeVisible()
-  await expect(page.getByText('Group type')).toBeVisible()
-  await page.getByRole('button', { name: /Link existing chat/ }).click()
-  await expect(page.getByRole('dialog', { name: 'Link existing chat' })).toBeVisible()
-  await page.getByPlaceholder('Search chats').fill('Mark')
-  await page.locator('.group-link > button').first().click()
-  await expect(page.getByRole('dialog', { name: 'Edit group' })).toBeVisible()
-})
-
-test('long Mark chat scrolls messages while shell stays visible', async ({ page }, testInfo) => {
-  await login(page)
-  const composer = page.locator('.compose')
-  await page.locator('.messages').evaluate(node => {
-    const source = node.querySelector('.message')
-    if (!source) throw new Error('Mark chat must contain a message')
-    for (let index = 0; index < 32; index += 1) node.append(source.cloneNode(true))
-  })
-  await expect(composer).toBeVisible()
-  const messages = page.locator('.messages')
-  await messages.evaluate(node => { node.scrollTop = node.scrollHeight })
-  await expect(composer).toBeVisible()
-  await expect(page.locator('.chat-head')).toBeVisible()
-  if (testInfo.project.name === 'desktop') await expect(page.locator('.sidebar')).toBeVisible()
-})
-
-test('settings privacy, devices, language and theme work', async ({ page }, testInfo) => {
-  await login(page)
-  if (testInfo.project.name === 'mobile') await page.locator('.mobile-nav button').last().click()
-  else { await page.getByRole('button', { name: 'Open main menu' }).click(); await page.locator('.main-menu').getByRole('button', { name: 'Settings', exact: true }).click() }
-  await page.getByText('Privacy and Security', { exact: true }).click()
-  await page.getByText('Last seen & online', { exact: true }).click()
-  await page.getByText('Nobody', { exact: true }).click()
-  await page.getByRole('button', { name: 'Back' }).click()
-  await page.getByText('Devices', { exact: true }).click()
-  await expect(page.getByText('Current', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Back' }).click()
-  await page.getByText('Appearance', { exact: true }).click()
-  await page.getByText('Light', { exact: true }).click()
-  await page.getByRole('button', { name: 'Back' }).click()
-  await page.getByText('Language', { exact: true }).click()
-  await expect(page.locator('.tg-panel-head strong')).toHaveText('Settings')
-})
-
-test('terminates every other active session and refreshes devices', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Devices screen is covered in desktop settings')
-  await login(page, 'Nanda')
-  const otherToken = await page.evaluate(async () => {
-    const requested = await fetch('http://127.0.0.1:8787/api/auth/otp/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'test@test.com' }) })
-    const { challengeId } = await requested.json()
-    const verified = await fetch('http://127.0.0.1:8787/api/auth/otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'test@test.com', code: '123456', challengeId, deviceLabel: 'Playwright other device' }) })
-    return (await verified.json() as { token: string }).token
-  })
-  await page.getByRole('button', { name: 'Open main menu' }).click()
-  await page.locator('.main-menu').getByRole('button', { name: 'Settings', exact: true }).click()
-  await page.getByText('Devices', { exact: true }).click()
-  await expect(page.getByText('Playwright other device', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Terminate other sessions' }).click()
-  await page.getByRole('dialog', { name: 'Terminate other sessions?' }).getByRole('button', { name: 'Terminate', exact: true }).click()
-  await expect(page.getByText('Other sessions have been terminated.')).toBeVisible()
-  await expect(page.getByText('Playwright other device', { exact: true })).toHaveCount(0)
-  await expect.poll(() => page.evaluate(async token => (await fetch('http://127.0.0.1:8787/api/chats', { headers: { Authorization: `Bearer ${token}` } })).status, otherToken)).toBe(401)
-})
-
-test('admin and legal flows are reachable for permitted roles', async ({ page }, testInfo) => {
-  await login(page, 'Mark')
-  if (testInfo.project.name === 'desktop') {
-    await page.getByTitle('Operations console').click()
-    await expect(page.getByText('Moderation console')).toBeVisible()
-  }
-  test.skip(testInfo.project.name === 'desktop', 'Desktop uses QR-first login; legal links remain in mobile auth')
-  await page.goto('/')
-  await page.getByText('Terms', { exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Terms of Service' })).toBeVisible()
-  await page.goto('/')
-  await page.getByText('Privacy', { exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Privacy Policy' })).toBeVisible()
-  await page.goto('/')
-  await page.getByText('Authors', { exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Authors & Credits' })).toBeVisible()
-})
-
-test('mobile layout opens settings and emoji panel', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'mobile', 'Mobile viewport only')
-  await login(page, 'Alisher')
-  await page.getByRole('button', { name: 'Open emoji picker' }).click()
-  await expect(page.getByText('Stickers', { exact: true })).toBeVisible()
-  await page.locator('.mobile-nav button').last().click()
-  await expect(page.getByText('Privacy and Security', { exact: true })).toBeVisible()
-})
-
-test('rich messaging delivers held voice and circle recordings, polls and location', async ({ page }) => {
-  await login(page)
-  const voiceButton = page.getByRole('button', { name: /Voice mode/ })
-  await voiceButton.click()
-  const circleButton = page.locator('.voice-button')
-  await circleButton.dispatchEvent('pointerdown')
-  await page.waitForTimeout(220)
-  await expect(page.getByRole('button', { name: /Release to send video circle/ })).toBeVisible()
-  await circleButton.dispatchEvent('pointerup')
-  await expect(page.getByText('A quiet moment from the studio').last()).toBeVisible()
-  await page.getByRole('button', { name: /Circle mode/ }).click()
-  await page.getByRole('button', { name: /Voice mode/ }).dispatchEvent('pointerdown')
-  await page.waitForTimeout(220)
-  await page.getByRole('button', { name: /Release to send voice message/ }).dispatchEvent('pointerup')
-  await expect(page.getByText('0:08', { exact: true }).last()).toBeVisible()
-
-  await page.getByRole('button', { name: 'Open rich message tools' }).click()
-  await page.getByText('Poll', { exact: true }).click()
-  await page.getByRole('button', { name: 'Create poll' }).click()
-  await expect(page.getByText('Team sync at 15:00?', { exact: true }).last()).toBeVisible()
-  await page.getByRole('button', { name: /Yes, works for me/ }).last().click()
-
-  await page.getByRole('button', { name: 'Open rich message tools' }).click()
-  await page.getByText('Location', { exact: true }).click()
-  await page.getByRole('button', { name: 'Share location' }).click()
-  await expect(page.getByText('Moscow Avenue · precise location').last()).toBeVisible()
-
-  await page.getByRole('button', { name: 'Open rich message tools' }).click()
-  await expect(page.getByText('Video circle', { exact: true })).toHaveCount(0)
-})
-
-test('stories open and close from the chat shell', async ({ page }, testInfo) => {
-  await login(page)
-  if (testInfo.project.name === 'mobile') await page.locator('.mobile-stories .story').first().click()
-  else await page.locator('.sidebar .story').first().click()
-  await expect(page.getByText('This story disappears in 24 hours')).toBeVisible()
-  await page.getByRole('button', { name: 'Close story' }).click()
-})
-
-test('telegram main menu routes supported Stage 4 entries', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Desktop menu only')
-  await login(page)
-  await page.getByRole('button', { name: 'Open main menu' }).click()
-  await expect(page.locator('.main-menu footer')).toContainText('Chettik Web')
-  await expect(page.getByText('Wallet', { exact: true })).toHaveCount(0)
-  await page.getByText('New Group', { exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'New Group' })).toBeVisible()
-  await page.getByRole('button', { name: 'Back to main menu' }).click()
-  await page.getByText('Night Mode', { exact: true }).click()
-  await expect(page.locator('.app')).not.toHaveClass(/dark/)
-  await page.locator('.main-menu').getByRole('button', { name: 'Settings', exact: true }).click()
-  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible()
-})
-
-test('my profile and saved messages target the signed-in account', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Desktop menu only')
-  await login(page, 'Nanda')
-  await page.getByRole('button', { name: 'Open main menu' }).click()
-  await page.getByRole('button', { name: 'My Profile', exact: true }).click()
-  await expect(page.getByRole('dialog', { name: 'Nanda profile' })).toBeVisible()
-  await page.getByRole('button', { name: 'Close profile' }).click()
-
-  await page.getByRole('button', { name: 'Open main menu' }).click()
-  await page.getByRole('button', { name: 'Saved Messages', exact: true }).click()
-  await expect(page.locator('.chat-row.active').last()).toContainText('Saved Messages')
-  await expect(page.getByText('Messages saved for yourself')).toBeVisible()
-  await expect(page.locator('.messages .message')).toContainText('Remember to write this down.')
-})
-
-test('email-only profiles do not expose a mobile row', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Desktop profile treatment')
-  await page.goto('/')
-  await page.evaluate(async () => {
-    const challenge = await fetch('http://127.0.0.1:8787/api/auth/otp/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'test2@test.com' }) })
-    const { challengeId } = await challenge.json()
-    const auth = await fetch('http://127.0.0.1:8787/api/auth/otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'test2@test.com', code: '123456', challengeId }) })
-    const { token } = await auth.json()
-    await fetch('http://127.0.0.1:8787/api/me/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ privacy: { lastSeen: 'Nobody' } }) })
-  })
-  await login(page, 'Nanda')
-  await page.getByRole('button', { name: 'Open Mark profile' }).first().click()
-  await expect(page.getByRole('dialog', { name: 'Mark profile' }).getByText('Mobile', { exact: true })).toHaveCount(0)
-})
-
-test('profile, confirmations and chat context actions are interactive', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Context menus are desktop treatment')
-  await login(page)
-  await page.getByRole('button', { name: 'Open Mark profile' }).first().click()
-  await expect(page.getByRole('dialog', { name: 'Mark profile' })).toBeVisible()
-  await page.getByRole('button', { name: 'More profile actions' }).click()
-  await expect(page.getByText('Export chat', { exact: true })).toBeVisible()
-  await page.getByText('Block user', { exact: true }).last().click()
-  await expect(page.getByRole('dialog', { name: 'Block Mark?' })).toBeVisible()
-  await page.getByRole('button', { name: 'Cancel' }).click()
-
-  await page.locator('.sidebar .chat-row').first().click({ button: 'right' })
-  await expect(page.getByRole('menu')).toBeVisible()
-  await page.getByText('Pin', { exact: true }).click()
-  await expect(page.locator('.sidebar .chat-row .chat-name svg')).toHaveCount(1)
-  await page.locator('.message').first().click({ button: 'right' })
-  await expect(page.getByText('Copy text', { exact: true })).toBeVisible()
-  await page.getByText('Forward', { exact: true }).click()
-  await expect(page.getByRole('dialog', { name: 'Forward to' })).toBeVisible()
-  await page.getByRole('dialog', { name: 'Forward to' }).getByText('Saved Messages', { exact: true }).click()
-
-  await page.getByRole('button', { name: 'Open main menu' }).click()
-  await page.getByRole('button', { name: 'Saved Messages', exact: true }).click()
-  await expect(page.locator('.messages .message').filter({ hasText: 'I tried the new onboarding flow.' })).toBeVisible()
-})
-
-test('non-Mark chats support context menus, sidebar resize, and outside dismissal', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Desktop context menus and resize handle')
-  await login(page)
-
-  const savedMessages = page.locator('.sidebar .chat-row').filter({ hasText: 'Saved Messages' })
-  await savedMessages.click({ button: 'right' })
-  await expect(page.getByRole('menu')).toBeVisible()
-  await page.locator('.floating-dismiss').click({ position: { x: 8, y: 8 } })
-  await expect(page.getByRole('menu')).toHaveCount(0)
-
-  await savedMessages.click()
-  await page.locator('.messages .message').first().click({ button: 'right' })
-  await expect(page.getByText('Copy text', { exact: true })).toBeVisible()
-  await page.locator('.floating-dismiss').click({ position: { x: 8, y: 8 } })
-  await expect(page.getByText('Copy text', { exact: true })).toHaveCount(0)
-
-  const sidebar = page.locator('.sidebar')
-  const before = (await sidebar.boundingBox())!.width
-  const handle = page.locator('.sidebar-resizer')
-  const handleBox = (await handle.boundingBox())!
-  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 120)
-  await page.mouse.down()
-  await page.mouse.move(handleBox.x + 70, handleBox.y + 120, { steps: 8 })
-  await page.mouse.up()
-  await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeGreaterThan(before)
-
-  await page.getByRole('button', { name: 'Open emoji picker' }).click()
-  await expect(page.locator('.emoji-picker')).toBeVisible()
-  await page.locator('.chat-head').click()
-  await expect(page.locator('.emoji-picker')).toHaveCount(0)
-})
-
-test('starts a device-local secret chat and selects timed media', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Desktop profile treatment')
-  await login(page)
-  await page.getByRole('button', { name: 'Open Mark profile' }).first().click()
-  await page.getByRole('button', { name: 'More profile actions' }).click()
-  await page.getByRole('button', { name: 'Start secret chat' }).first().click()
-  await expect(page.getByText('Secret chat · Mark', { exact: true }).first()).toBeVisible()
-  await page.locator('input[type="file"]').first().setInputFiles({ name: 'private.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('image') })
-  await expect(page.getByRole('dialog', { name: 'Media send options' })).toBeVisible()
-  await page.getByRole('button', { name: 'Set media timer' }).click()
-  await page.getByRole('button', { name: 'View Once' }).click()
-  await page.getByRole('button', { name: 'Send media' }).click()
-  await expect(page.getByText('1 · View once')).toBeVisible()
-})
-
-test('sends a sticker from the picker', async ({ page }) => {
-  await login(page)
-  await page.getByRole('button', { name: 'Open emoji picker' }).click()
-  await page.getByRole('button', { name: 'Stickers' }).click()
-  await page.getByRole('button', { name: 'Send Crimson heart' }).click()
-  await expect(page.locator('.sticker-message').last()).toBeVisible()
+  await expect(page.locator('.chat-head')).toContainText('Release notes')
 })

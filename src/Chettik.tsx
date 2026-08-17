@@ -7,6 +7,7 @@ import { MediaSendSheet, type MediaExpiry, RichComposerSheet, VoiceButton } from
 import { ChatContextMenu, ConfirmModal, type ConfirmAction, ForwardPanel, GroupPanel, MessageContextMenu, ProfilePanel } from './InteractionPanels'
 
 export type Account = {
+  id?: string
   role: 'SuperAdmin' | 'Admin' | 'User'
   name: string
   username: string
@@ -41,17 +42,6 @@ const credits = {
   ru: { dev: 'Разработчик и основатель: Nanda, Discord: nandak070, Telegram: nanda070', mark: 'Разработчик: Mark, Discord: schizophrenogenic', contact: 'Связь', all: 'Nanda · Email: adnan.huseynli1@gmail.com · Discord: nandak070 · Telegram: nanda070' },
   en: { dev: 'Developer & founder: Nanda, Discord: nandak070, Telegram: nanda070', mark: 'Developer: Mark, Discord: schizophrenogenic', contact: 'Contact', all: 'Nanda · Email: adnan.huseynli1@gmail.com · Discord: nandak070 · Telegram: nanda070' },
 }
-const initialMessages = (name: string): Message[] => [
-  { id: 'm1', sender: 'Mark', text: 'I tried the new onboarding flow. It feels really calm.', time: '10:38', mine: false, reactions: ['❤️'] },
-  { id: 'm2', sender: name, text: 'That was the idea. Less noise, more space for people.', time: '10:40', mine: true, reactions: [] },
-  { id: 'm3', sender: 'Mark', text: 'That reads much better. And the dark red feels like a real signature.', time: '10:42', mine: false, reactions: [], pinned: true },
-]
-const initialChatMessages = (account: Account): ChatMessages => ({
-  Mark: initialMessages(account.name),
-  'Design circle': [],
-  'Saved Messages': [{ id: 'saved-1', sender: account.name, text: 'Remember to write this down.', time: 'Mon', mine: true, reactions: [] }],
-  Alisher: [],
-})
 export default function Chettik() {
   const [dark, setDark] = useState(true)
   const [language, setLanguage] = useState<Language>('EN')
@@ -60,9 +50,10 @@ export default function Chettik() {
   const [otp, setOtp] = useState('')
   const [otpChallengeId, setOtpChallengeId] = useState('')
   const [authNotice, setAuthNotice] = useState('')
+  const [authPending, setAuthPending] = useState(false)
   const [session, setSession] = useState<Account | null>(null)
   const [legal, setLegal] = useState<LegalDoc | null>(null)
-  const [desktopLogin, setDesktopLogin] = useState<'qr' | 'email' | 'settings' | 'passkey'>('qr')
+  const [desktopLogin, setDesktopLogin] = useState<'qr' | 'email' | 'passkey'>('qr')
   const ru = language === 'RU'
   useEffect(() => { if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => undefined) }, [])
   const tr = ru ? { invalid: 'Введите корректный email.', code: 'Код отправлен на email.', legal: ['Условия', 'Конфиденциальность', 'Авторы'] } : { invalid: 'Enter a valid email address.', code: 'A verification code was sent to your email.', legal: ['Terms', 'Privacy', 'Authors'] }
@@ -74,28 +65,95 @@ export default function Chettik() {
     const normalizedEmail = targetEmail.trim().toLowerCase()
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) return setAuthNotice(tr.invalid)
     setAuthNotice('')
-    const response = await fetch(`${API_URL}/auth/otp/request`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail }) })
-    const payload = await response.json() as { challengeId?: string; error?: string }
-    if (!response.ok || !payload.challengeId) return setAuthNotice(payload.error || tr.invalid)
-    setEmail(normalizedEmail)
-    setOtp('')
-    setOtpChallengeId(payload.challengeId)
-    setPicked(seedAccounts.find(account => account.email === normalizedEmail) || { ...seedAccounts[2], email: normalizedEmail, name: 'New user', username: '@new' })
+    setAuthPending(true)
+    try {
+      const response = await fetch(`${API_URL}/auth/otp/request`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail }) })
+      const payload = await response.json() as { challengeId?: string; error?: string }
+      if (!response.ok || !payload.challengeId) return setAuthNotice(payload.error || tr.invalid)
+      setEmail(normalizedEmail)
+      setOtp('')
+      setOtpChallengeId(payload.challengeId)
+      setPicked(seedAccounts.find(account => account.email === normalizedEmail) || { ...seedAccounts[2], email: normalizedEmail, name: 'New user', username: '@new' })
+    } catch {
+      setAuthNotice(ru ? 'Не удалось подключиться. Попробуйте ещё раз.' : 'Could not connect. Please try again.')
+    } finally {
+      setAuthPending(false)
+    }
   }
   const requestOtp = () => { void beginOtp(email) }
   const verifyOtp = async () => {
     if (!picked || !otpChallengeId) return setAuthNotice(tr.code)
-    const response = await fetch(`${API_URL}/auth/otp/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: picked.email, code: otp, challengeId: otpChallengeId, deviceLabel: 'Web • Browser' }) })
-    const payload = await response.json() as { token?: string; user?: Account; error?: string }
-    if (!response.ok || !payload.token || !payload.user) return setAuthNotice(payload.error || tr.code)
-    localStorage.setItem(sessionKey(payload.user), payload.token)
-    setAuthNotice('')
-    setSession(payload.user)
+    setAuthPending(true)
+    try {
+      const response = await fetch(`${API_URL}/auth/otp/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: picked.email, code: otp, challengeId: otpChallengeId, deviceLabel: 'Web • Browser' }) })
+      const payload = await response.json() as { token?: string; user?: Account; error?: string }
+      if (!response.ok || !payload.token || !payload.user) return setAuthNotice(payload.error || tr.code)
+      localStorage.setItem(sessionKey(payload.user), payload.token)
+      setAuthNotice('')
+      setSession(payload.user)
+    } catch {
+      setAuthNotice(ru ? 'Не удалось подключиться. Попробуйте ещё раз.' : 'Could not connect. Please try again.')
+    } finally {
+      setAuthPending(false)
+    }
   }
   if (legal) return <LegalPage doc={legal} language={language} dark={dark} onBack={() => setLegal(null)} />
   if (session) return <Messenger account={session} dark={dark} setDark={setDark} language={language} onLanguage={() => setLanguage(ru ? 'EN' : 'RU')} onLogout={() => { localStorage.removeItem(sessionKey(session)); setSession(null) }} />
   return <main className={`auth-screen ${dark ? 'dark' : ''}`}>
-    <section className="desktop-login"><header><button aria-label="Back" onClick={() => setDesktopLogin('qr')}><ChevronLeft size={20} /></button><button onClick={() => setDesktopLogin('settings')}>SETTINGS</button></header>{desktopLogin === 'settings' ? <div className="desktop-login-card"><img src="/logo.svg" alt="" /><h1>{ru ? 'Настройки входа' : 'Login settings'}</h1><p>{ru ? 'Язык и тема сохраняются локально на этом устройстве.' : 'Language and appearance are stored only on this device.'}</p><button className="desktop-outline" onClick={() => setLanguage(ru ? 'EN' : 'RU')}>{language === 'RU' ? 'English' : 'Русский'}</button><button className="desktop-outline" onClick={() => setDark(!dark)}>{dark ? 'Light mode' : 'Dark mode'}</button></div> : desktopLogin === 'passkey' ? <div className="desktop-login-card"><div className="desktop-passkey">⌁</div><h1>{ru ? 'Войти с ключом доступа' : 'Log in with a passkey'}</h1><p>{ru ? 'Ключи доступа настраиваются после входа. Используйте QR или email.' : 'Passkeys are configured after sign-in in this local environment. Use QR or your email address.'}</p><button className="desktop-primary" onClick={() => setDesktopLogin('qr')}>{ru ? 'К QR-коду' : 'Back to QR'}</button></div> : desktopLogin === 'email' ? <div className="desktop-login-card email-login">{!picked ? <><h1>{ru ? 'Ваш email' : 'Your email address'}</h1><p>{ru ? 'Мы отправим одноразовый код для входа.' : 'We will send a one-time sign-in code.'}</p><form onSubmit={e => { e.preventDefault(); requestOtp() }}><input value={email} onChange={e => setEmail(e.target.value)} placeholder="name@example.com" aria-label="Email address" type="email" required /><button className="desktop-primary" type="submit">{ru ? 'Далее' : 'Next'}</button></form><button className="desktop-link" onClick={() => setDesktopLogin('qr')}>{ru ? 'Вход через QR' : 'Sign in with QR'}</button>{authNotice && <p className="form-notice">{authNotice}</p>}</> : <><div className="avatar" style={{ background: picked.color }}>{picked.initials}</div><h1>{ru ? 'Подтвердите вход' : 'Confirm sign in'}</h1><p>{picked.email} · {tr.code}</p><form className="otp-form" onSubmit={e => { e.preventDefault(); void verifyOtp() }}><OtpCells value={otp} onChange={setOtp} desktop /><button className="desktop-primary">{ru ? 'Войти' : 'Sign in'}</button></form><button className="desktop-link" onClick={() => { setPicked(null); setOtp(''); setOtpChallengeId(''); setAuthNotice('') }}>{ru ? 'Изменить email' : 'Change email'}</button>{authNotice && <p className="form-notice">{authNotice}</p>}</>}</div> : <div className="desktop-login-card qr-login"><div className="desktop-qr"><QrCode size={154} strokeWidth={1.25} /><img src="/logo.svg" alt="Chettik" /></div><h1>{ru ? 'Сканируйте в мобильном Chettik' : 'Scan From Mobile Chettik'}</h1><ol><li>{ru ? 'Откройте Chettik на устройстве с активной сессией' : 'Open Chettik on a signed-in device'}</li><li>{ru ? 'Настройки → Устройства → Добавить устройство' : 'Go to Settings → Devices → Add Device'}</li><li>{ru ? 'Сканируйте код для входа' : 'Scan this code to log in'}</li></ol><button className="desktop-link" onClick={() => setDesktopLogin('email')}>{ru ? 'Войти по email' : 'Log in using email'}</button><button className="desktop-link" onClick={() => setDesktopLogin('passkey')}>{ru ? 'Войти с ключом доступа' : 'Log in using passkey'}</button></div>}</section>
+    <section className="desktop-login">
+      <header>
+        {desktopLogin === 'qr'
+          ? <span className="desktop-header-spacer" />
+          : <button className="desktop-back" aria-label={ru ? 'Назад к QR-коду' : 'Back to QR'} onClick={() => setDesktopLogin('qr')}><ChevronLeft size={19} />{ru ? 'QR-код' : 'QR code'}</button>}
+        <div className="desktop-auth-controls">
+          <button aria-label={ru ? 'Сменить язык' : 'Change language'} onClick={() => setLanguage(ru ? 'EN' : 'RU')}>{language}</button>
+          <button aria-label={ru ? 'Сменить тему' : 'Toggle theme'} onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
+        </div>
+      </header>
+      <div className="desktop-login-stage">
+        <div className="desktop-login-panel" key={`${desktopLogin}-${picked ? 'confirm' : 'start'}`}>
+          <div className="auth-brand-lockup"><img src="/logo.svg" alt="" /><span>Chettik</span></div>
+          {desktopLogin === 'passkey' ? <>
+            <div className="desktop-passkey">⌁</div>
+            <h1>{ru ? 'Войти с ключом доступа' : 'Log in with a passkey'}</h1>
+            <p>{ru ? 'Ключи доступа настраиваются после входа. Используйте QR-код или email.' : 'Passkeys are configured after sign-in. Use the QR code or your email address.'}</p>
+            <button className="desktop-primary" onClick={() => setDesktopLogin('qr')}>{ru ? 'Вернуться к QR-коду' : 'Back to QR code'}</button>
+          </> : desktopLogin === 'email' ? <div className="desktop-login-card email-login">
+            {!picked ? <>
+              <h1>{ru ? 'Войдите по email' : 'Log in with email'}</h1>
+              <p>{ru ? 'Введите адрес, привязанный к вашему аккаунту Chettik.' : 'Enter the address linked to your Chettik account.'}</p>
+              <form onSubmit={event => { event.preventDefault(); requestOtp() }}>
+                <label htmlFor="desktop-auth-email">{ru ? 'Email' : 'Email address'}</label>
+                <input id="desktop-auth-email" value={email} onChange={event => setEmail(event.target.value)} placeholder="name@example.com" aria-label="Email address" type="email" autoComplete="email" required />
+                <button className="desktop-primary" type="submit" disabled={authPending}>{authPending ? (ru ? 'Отправляем…' : 'Sending…') : (ru ? 'Продолжить' : 'Continue')}</button>
+              </form>
+              <button className="desktop-secondary" onClick={() => setDesktopLogin('qr')}><QrCode size={17} />{ru ? 'Войти через QR-код' : 'Sign in with QR code'}</button>
+              {authNotice && <p className="form-notice" role="alert">{authNotice}</p>}
+            </> : <>
+              <h1>{ru ? 'Проверьте почту' : 'Check your email'}</h1>
+              <p>{ru ? `Введите 6-значный код, отправленный на ${picked.email}.` : `Enter the 6-digit code sent to ${picked.email}.`}</p>
+              <form className="otp-form" onSubmit={event => { event.preventDefault(); void verifyOtp() }}>
+                <OtpCells value={otp} onChange={setOtp} desktop />
+                <button className="desktop-primary" disabled={authPending || otp.length !== 6}>{authPending ? (ru ? 'Проверяем…' : 'Verifying…') : (ru ? 'Войти' : 'Sign in')}</button>
+              </form>
+              <button className="desktop-secondary" onClick={() => { setPicked(null); setOtp(''); setOtpChallengeId(''); setAuthNotice('') }}>{ru ? 'Изменить email' : 'Use a different email'}</button>
+              {authNotice && <p className="form-notice" role="alert">{authNotice}</p>}
+            </>}
+          </div> : <div className="desktop-login-card qr-login">
+            <div className="desktop-qr"><QrCode size={176} strokeWidth={1.25} /><img src="/logo.svg" alt="" /></div>
+            <h1>{ru ? 'Сканируйте в мобильном Chettik' : 'Scan from mobile Chettik'}</h1>
+            <p className="qr-subtitle">{ru ? 'Быстрый и безопасный вход без ввода кода.' : 'A quick, secure sign-in without typing a code.'}</p>
+            <ol>
+              <li>{ru ? 'Откройте Chettik на устройстве с активной сессией' : 'Open Chettik on a signed-in device'}</li>
+              <li>{ru ? 'Откройте Настройки → Устройства' : 'Go to Settings → Devices'}</li>
+              <li>{ru ? 'Нажмите «Добавить устройство» и сканируйте код' : 'Choose Add Device and scan this code'}</li>
+            </ol>
+            <button className="desktop-secondary" onClick={() => setDesktopLogin('email')}>{ru ? 'Войти по email' : 'Log in using email'}</button>
+            <button className="desktop-tertiary" onClick={() => setDesktopLogin('passkey')}>{ru ? 'Войти с ключом доступа' : 'Log in using passkey'}</button>
+          </div>}
+        </div>
+      </div>
+    </section>
     <div className="auth-ambient one" /><div className="auth-ambient two" />
     <header className="auth-header">
       <div className="auth-logo"><img src="/logo.svg" alt="" /> chettik</div>
@@ -104,8 +162,9 @@ export default function Chettik() {
     <section className="auth-layout">
       <div className="auth-intro"><div className="eyebrow"><ShieldCheck size={15} /> PRIVATE MESSENGER</div><h1>{copy.title}</h1><p>{copy.subtitle}</p><div className="auth-note"><Check size={16} /> {copy.secure}</div></div>
       <div className="auth-card">
-        {!picked && <><div className="card-kicker">{ru ? 'Ваш email' : 'Your email address'}</div><p className="code-copy">{ru ? 'Мы отправим одноразовый код для входа.' : 'We will send a one-time sign-in code.'}</p><form onSubmit={(e) => { e.preventDefault(); requestOtp() }}><input value={email} onChange={e => setEmail(e.target.value)} placeholder="name@example.com" aria-label="Email address" type="email" required /><button className="primary" type="submit">{copy.continue} <ArrowRight size={16} /></button></form>{authNotice && <p className="form-notice" role="alert">{authNotice}</p>}</>}
-        {picked && <><button className="back" onClick={() => { setPicked(null); setOtp(''); setOtpChallengeId(''); setAuthNotice('') }}><ChevronLeft size={16} /> {copy.back}</button><div className="code-user"><div className="avatar" style={{ background: picked.color }}>{picked.initials}</div><strong>{picked.name}</strong><span>{picked.email}</span></div><p className="code-copy">{copy.code}</p><form className="otp-form" onSubmit={(e) => { e.preventDefault(); void verifyOtp() }}><OtpCells value={otp} onChange={setOtp} /><button className="primary" type="submit">{copy.verify} <ArrowRight size={16} /></button></form><small className="demo-hint">{tr.code}</small>{authNotice && <p className="form-notice" role="alert">{authNotice}</p>}</>}
+        <div className="mobile-card-brand"><img src="/logo.svg" alt="" /><span>Chettik</span></div>
+        {!picked && <><h1>{ru ? 'Войдите по email' : 'Log in with email'}</h1><p className="code-copy">{ru ? 'Введите адрес, привязанный к вашему аккаунту.' : 'Enter the address linked to your account.'}</p><form onSubmit={(e) => { e.preventDefault(); requestOtp() }}><input value={email} onChange={e => setEmail(e.target.value)} placeholder="name@example.com" aria-label="Email address" type="email" autoComplete="email" required /><button className="primary" type="submit" disabled={authPending}>{authPending ? (ru ? 'Отправляем…' : 'Sending…') : copy.continue} <ArrowRight size={16} /></button></form>{authNotice && <p className="form-notice" role="alert">{authNotice}</p>}</>}
+        {picked && <><button className="back" onClick={() => { setPicked(null); setOtp(''); setOtpChallengeId(''); setAuthNotice('') }}><ChevronLeft size={16} /> {copy.back}</button><div className="code-user"><span>{picked.email}</span></div><p className="code-copy">{copy.code}</p><form className="otp-form" onSubmit={(e) => { e.preventDefault(); void verifyOtp() }}><OtpCells value={otp} onChange={setOtp} /><button className="primary" type="submit" disabled={authPending || otp.length !== 6}>{authPending ? (ru ? 'Проверяем…' : 'Verifying…') : copy.verify} <ArrowRight size={16} /></button></form>{authNotice && <p className="form-notice" role="alert">{authNotice}</p>}</>}
       </div>
     </section>
     <footer><span>© 2026 Chettik</span><span><button onClick={() => setLegal('terms')}>{tr.legal[0]}</button> · <button onClick={() => setLegal('privacy')}>{tr.legal[1]}</button> · <button onClick={() => setLegal('authors')}>{tr.legal[2]}</button></span></footer>
@@ -146,21 +205,15 @@ function LegalPage({ doc, language, dark, onBack }: { doc: LegalDoc; language: '
 type MessengerProps = { account: Account; dark: boolean; setDark: (value: boolean) => void; language: Language; onLanguage: () => void; onLogout: () => void }
 type Channel = { id: string; title: string; description: string; username: string | null; visibility: 'public' | 'private'; owner_id: string; chat_id: string; subscriber_count: number; my_role: '' | 'owner' | 'admin' | 'subscriber' }
 type ChatRow = { id: string; name: ChatName; preview: string; time: string; initials: string; color: string; unread: number; secret?: boolean; channel?: Channel }
-const fallbackChats: ChatRow[] = [
-  { id: 'nanda-mark', name: 'Mark', preview: 'That reads much better.', time: '10:42', initials: 'M', color: '#6e4c97', unread: 2 },
-  { id: 'design-circle', name: 'Design circle', preview: 'Nanda: I shared the new motion study ✨', time: '09:30', initials: 'D', color: '#4c8a83', unread: 0 },
-  { id: 'saved-nanda', name: 'Saved Messages', preview: 'You: Remember to write this down.', time: 'Mon', initials: 'S', color: '#9e2338', unread: 0 },
-  { id: 'nanda-alisher', name: 'Alisher', preview: 'See you after work!', time: 'Sun', initials: 'A', color: '#bf8057', unread: 0 },
-]
 
 function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: MessengerProps) {
   const [message, setMessage] = useState('')
   const [page, setPage] = useState<'chat' | 'settings' | 'admin'>('chat')
-  const [selectedChat, setSelectedChat] = useState<ChatName>('Mark')
-  const [chatMessages, setChatMessages] = useState<ChatMessages>(() => initialChatMessages(account))
+  const [selectedChat, setSelectedChat] = useState<ChatName>('Saved Messages')
+  const [chatMessages, setChatMessages] = useState<ChatMessages>({})
   const [profile, setProfile] = useState<Profile>(() => ({ bio: '', github: '', discord: '', lastSeen: 'Contacts', blocked: [], privacy: { lastSeen: 'Contacts', photo: 'Everybody', bio: 'Everybody', birthday: 'Contacts', forwards: 'Everybody', voice: 'Contacts', messages: 'Everybody' }, privacyExceptions: {}, autoDelete: '6 months', pushEnabled: false, telemetryEnabled: false }))
   const [reports, setReports] = useState<string[]>([])
-  const [chatRows, setChatRows] = useState<ChatRow[]>(fallbackChats)
+  const [chatRows, setChatRows] = useState<ChatRow[]>([])
   const [token, setToken] = useState('')
   const [search, setSearch] = useState('')
   const [reply, setReply] = useState<Message | null>(null)
@@ -186,10 +239,11 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const [forwardMessage, setForwardMessage] = useState<Message | null>(null)
   const [chatPinned, setChatPinned] = useState(false)
   const [chatMuted, setChatMuted] = useState(false)
-  const [chatUnread, setChatUnread] = useState(false)
-  const [menuStub, setMenuStub] = useState<string | null>(null)
   const [, setChannels] = useState<Channel[]>([])
   const [createChannelOpen, setCreateChannelOpen] = useState(false)
+  const [createGroupOpen, setCreateGroupOpen] = useState(false)
+  const [contactsOpen, setContactsOpen] = useState(false)
+  const [contacts, setContacts] = useState<Account[]>([])
   const [channelInfoOpen, setChannelInfoOpen] = useState(false)
   const [channelEditOpen, setChannelEditOpen] = useState(false)
   const [channelMenuOpen, setChannelMenuOpen] = useState(false)
@@ -228,6 +282,24 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     setProfileOpen(false)
   }
   const addToChat = (chat: ChatName, item: Message) => setChatMessages(current => ({ ...current, [chat]: [...current[chat], item] }))
+  const openContacts = async () => {
+    if (!token) return
+    const response = await fetch(`${API_URL}/users`, { headers: { Authorization: `Bearer ${token}` } })
+    if (response.ok) setContacts(await response.json() as Account[])
+    setContactsOpen(true)
+  }
+  const startDirectChat = async (contact: Account) => {
+    if (!token || !contact.id) return
+    const response = await fetch(`${API_URL}/chats/direct`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ userId: contact.id }) })
+    if (!response.ok) return
+    const created = await response.json() as { id: string; title: ChatName }
+    const row: ChatRow = { id: created.id, name: created.title, preview: '', time: '', initials: contact.initials, color: contact.color, unread: 0 }
+    setChatRows(current => current.some(chat => chat.id === row.id) ? current : [row, ...current])
+    setChatMessages(current => current[created.title] ? current : { ...current, [created.title]: [] })
+    setSelectedChat(created.title)
+    setContactsOpen(false)
+    setMenuOpen(false)
+  }
   useEffect(() => {
     let disposed = false
     const connect = async () => {
@@ -238,14 +310,13 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       const [profileResponse, chatsResponse, channelsResponse] = await Promise.all([fetch(`${API_URL}/me/profile`, { headers }), fetch(`${API_URL}/chats`, { headers }), fetch(`${API_URL}/channels`, { headers })])
       if (!profileResponse.ok || !chatsResponse.ok || !channelsResponse.ok || disposed) return
       const remoteProfile = await profileResponse.json() as Profile
-      const remoteChats = await chatsResponse.json() as Array<{ id: string; title: ChatName; preview: string; last_message_at: string | null }>
+      const remoteChats = await chatsResponse.json() as Array<{ id: string; title: ChatName; type: string; preview: string; last_message_at: string | null }>
       const remoteChannels = await channelsResponse.json() as Channel[]
       setChannels(remoteChannels)
       setProfile(current => ({ ...current, ...remoteProfile, privacy: { ...current.privacy, ...remoteProfile.privacy }, lastSeen: remoteProfile.privacy?.lastSeen || current.lastSeen }))
       const rows = remoteChats.map(item => {
-        const fallback = fallbackChats.find(chat => chat.name === item.title)
         const channel = remoteChannels.find(value => value.chat_id === item.id)
-        return { ...(fallback || { initials: item.title.slice(0, 1).toUpperCase(), color: '#9e2338' }), id: item.id, name: item.title, preview: item.preview || (channel ? 'No posts yet' : fallback?.preview || ''), time: item.last_message_at ? new Date(item.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '', unread: 0, channel }
+        return { initials: item.title.slice(0, 1).toUpperCase(), color: item.type === 'saved' ? account.color : '#9e2338', id: item.id, name: item.title, preview: item.preview, time: item.last_message_at ? new Date(item.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '', unread: 0, channel }
       })
       setChatRows(rows)
       const packsResponse = await fetch(`${API_URL}/sticker-packs`, { headers })
@@ -297,7 +368,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       .catch(() => undefined)
   }, [profileAccount, profileOpen, token])
   const closeTransient = () => {
-    setMenuOpen(false); setMenuStub(null); setMessageMenu(null); setChatMenu(null); setEmojiOpen(false)
+    setMenuOpen(false); setMessageMenu(null); setChatMenu(null); setEmojiOpen(false)
     setRichOpen(false); setMediaFile(null); setSettingsOpen(false); setStoryOpen(null); setProfileOpen(false)
     setGroupOpen(false); setGroupMenuOpen(false); setChannelMenuOpen(false); setCreateChannelOpen(false)
     setChannelInfoOpen(false); setChannelEditOpen(false); setForwardMessage(null); setConfirm(null)
@@ -356,7 +427,6 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const handleChatMenu = (action: string) => {
     if (action === 'pin') setChatPinned(value => !value)
     else if (action === 'mute') setChatMuted(value => !value)
-    else if (action === 'unread') setChatUnread(true)
     else if (action === 'secret') startSecretChat()
     else if (action === 'clear-history' || action === 'delete-chat') setConfirm({ action })
     setChatMenu(null)
@@ -422,10 +492,10 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   return <div className={`app ${dark ? 'dark' : ''}`}>
     <div className="app-shell" style={{ '--sidebar-width': `${chatListWidth}px` } as CSSProperties}>
       <nav className="rail"><img className="mark" src="/logo.svg" alt="Chettik" /><button className="rail-btn active" aria-label="Open main menu" onClick={() => setMenuOpen(true)}><Menu size={21} /></button><button className="rail-btn" aria-label="Open saved messages" onClick={() => openChat('Saved Messages')}><Pin size={19} /></button><div className="rail-spacer" />{account.role !== 'User' && <button className="rail-btn" title="Operations console" onClick={() => setPage('admin')}><ShieldAlert size={19} /></button>}<button className="avatar me" aria-label="Open my profile" title={account.name} onClick={() => { setProfileAccount(account); setProfileOpen(true) }}>{account.initials}</button></nav>
-      <aside className="sidebar"><div className="side-top"><div className="wordmark"><img src="/logo.svg" alt="" />chett<span>i</span>k</div><button className="icon-btn" aria-label="New chat"><MessageCircle size={19} /></button></div><label className="search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder={language === 'RU' ? 'Поиск сообщений' : 'Search messages'} /></label><div className="stories" aria-label={language === 'RU' ? 'Истории' : 'Stories'}>{[{ name: 'Mark', initials: 'M', color: '#6e4c97' }, { name: 'Nanda', initials: 'N', color: '#9e2338' }, { name: 'Alisher', initials: 'A', color: '#bf8057' }].map(story => <button className="story" key={story.name} onClick={() => setStoryOpen(story.name)}><span className="avatar" style={{ background: story.color }}>{story.initials}</span><span>{story.name}</span></button>)}</div><div className="list-title">Cloud chats · {matches.length} matches</div><div className="chat-list">{chatRows.map(chat => <button onClick={() => openChat(chat.name)} onContextMenu={event => { event.preventDefault(); setChatMenu({ name: chat.name, x: event.clientX, y: event.clientY }) }} className={`chat-row ${selectedChat === chat.name ? 'active' : ''}`} key={chat.id}><div className={`avatar ${chat.channel ? 'channel-avatar' : ''}`} style={{ background: chat.color }}>{chat.channel ? <MessageCircle size={18} /> : chat.initials}</div><div className="chat-copy"><div className="chat-name">{chat.name}{chat.channel ? <span className="channel-mark">CHANNEL</span> : chat.name === 'Mark' && chatPinned ? <Pin size={11} /> : null}<span className="time">{chat.time}</span></div><div className="chat-preview">{channelMuted && chat.channel && selectedChat === chat.name ? 'Muted' : chatMuted && chat.name === 'Mark' ? 'Muted' : chat.preview}</div></div>{(chat.unread || (chat.name === 'Mark' && chatUnread)) ? <span className="unread">{chat.name === 'Mark' && chatUnread ? 1 : chat.unread}</span> : null}</button>)}</div></aside><div className="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize chat list" onPointerDown={startSidebarResize} />
+      <aside className="sidebar"><div className="side-top"><div className="wordmark"><img src="/logo.svg" alt="" />chett<span>i</span>k</div><button className="icon-btn" aria-label="New chat" onClick={() => void openContacts()}><MessageCircle size={19} /></button></div><label className="search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder={language === 'RU' ? 'Поиск сообщений' : 'Search chats'} /></label><div className="list-title">{language === 'RU' ? 'Чаты' : 'Chats'} · {chatRows.filter(chat => chat.name !== 'Saved Messages').length}</div><div className="chat-list">{chatRows.filter(chat => chat.name.toLowerCase().includes(search.toLowerCase())).map(chat => <button onClick={() => openChat(chat.name)} onContextMenu={event => { event.preventDefault(); setChatMenu({ name: chat.name, x: event.clientX, y: event.clientY }) }} className={`chat-row ${selectedChat === chat.name ? 'active' : ''}`} key={chat.id}><div className={`avatar ${chat.channel ? 'channel-avatar' : ''}`} style={{ background: chat.color }}>{chat.channel ? <MessageCircle size={18} /> : chat.initials}</div><div className="chat-copy"><div className="chat-name">{chat.name}{chat.channel ? <span className="channel-mark">CHANNEL</span> : null}<span className="time">{chat.time}</span></div><div className="chat-preview">{channelMuted && chat.channel && selectedChat === chat.name ? 'Muted' : chat.preview}</div></div>{chat.unread ? <span className="unread">{chat.unread}</span> : null}</button>)}</div></aside><div className="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize chat list" onPointerDown={startSidebarResize} />
       <section className="chat">
         <header className="chat-head"><button className="icon-btn mobile-menu" aria-label="Open main menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>{selectedChannel ? <><button className="icon-btn profile-open" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><div className="avatar channel-avatar" style={{ background: '#9e2338' }}><MessageCircle size={18} /></div></button><button className="chat-person profile-open" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><strong>{selectedChannel.title}</strong><span>{selectedChannel.subscriber_count} subscriber{selectedChannel.subscriber_count === 1 ? '' : 's'} · channel</span></button></> : selectedChat === 'Mark' ? <><button className="icon-btn profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><div className="avatar" style={{ background: '#6e4c97' }}>M</div></button><button className="chat-person profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><strong>Mark <span className="badge">ADMIN</span></strong><span>online · cloud chat</span></button></> : <><div className="avatar" style={{ background: selectedChat === 'Saved Messages' ? account.color : chatRows.find(chat => chat.name === selectedChat)?.color }}>{selectedChat === 'Saved Messages' ? account.initials : selectedChat[0]}</div><button className="chat-person profile-open" onClick={() => selectedChat === 'Design circle' && setGroupOpen(true)}><strong>{selectedChat}</strong><span>{selectedChat === 'Saved Messages' ? 'Messages saved for yourself' : selectedChat === 'Design circle' ? '3 members · group chat' : 'cloud chat'}</span></button></>}<div className="head-actions">{selectedChannel && <><button className="icon-btn" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><Users size={19} /></button><button className="icon-btn" aria-label="Open channel menu" onClick={() => setChannelMenuOpen(true)}><MoreHorizontal size={19} /></button></>}{selectedChat === 'Design circle' && <button className="icon-btn" aria-label="Open group menu" onClick={() => setGroupMenuOpen(true)}><MoreHorizontal size={19} /></button>}<button className="icon-btn" title="Switch language" onClick={onLanguage}>{language}</button><button className="icon-btn" aria-label="Toggle theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header>
-        <div className="mobile-stories stories" aria-label={language === 'RU' ? 'Истории' : 'Stories'}>{[{ name: 'Mark', initials: 'M', color: '#6e4c97' }, { name: 'Nanda', initials: 'N', color: '#9e2338' }, { name: 'Alisher', initials: 'A', color: '#bf8057' }].map(story => <button className="story" key={story.name} onClick={() => setStoryOpen(story.name)}><span className="avatar" style={{ background: story.color }}>{story.initials}</span><span>{story.name}</span></button>)}</div>
+        {chatRows.length <= 1 && <div className="inbox-empty"><div className="inbox-empty-icon"><MessageCircle size={28} /></div><h2>{language === 'RU' ? 'Пока нет чатов' : 'No chats yet'}</h2><p>{language === 'RU' ? 'Начните личный диалог, создайте группу или канал.' : 'Start a direct conversation, create a group, or publish a channel.'}</p><div><button className="empty-primary" onClick={() => void openContacts()}>{language === 'RU' ? 'Новый чат' : 'New chat'}</button><button onClick={() => setCreateGroupOpen(true)}>{language === 'RU' ? 'Новая группа' : 'New group'}</button><button onClick={() => setCreateChannelOpen(true)}>{language === 'RU' ? 'Новый канал' : 'New channel'}</button></div></div>}
         <div className="messages" aria-live="polite"><div className="date">{language === 'RU' ? 'Сегодня' : 'Today'}</div>{matches.map(item => <div onContextMenu={event => { event.preventDefault(); setMessageMenu(item) }} className={`message ${item.mine ? 'mine' : ''}`} key={item.id}><div className="avatar" style={{ background: item.mine ? account.color : '#6e4c97' }}>{item.mine ? account.initials : 'M'}</div><div className={`bubble ${item.kind ? `bubble-${item.kind}` : ''}`}>{item.replyTo && <small className="reply-ref">↳ {item.replyTo}</small>}{item.kind !== 'sticker' && <span className="sender">{item.sender}</span>}{item.kind === 'sticker' ? <img className="sticker-message" src={item.stickerUrl} alt={item.text} /> : item.kind === 'voice' ? <div className="voice-message"><span className="voice-wave">▁▃▆▇▅▇▃▂</span><strong>{item.text}</strong></div> : item.kind === 'circle' ? <div className="circle-message"><span>▶</span><small>{item.text}</small></div> : item.kind === 'media' ? <button className="timed-media" aria-label="Open timed media" onClick={() => { if (item.mediaExpiry === 'once') setMessages(old => old.filter(message => message.id !== item.id)); else if (item.mediaExpiry && item.mediaExpiry !== 'never') { setMessages(old => old.map(message => message.id === item.id ? { ...message, opened: true } : message)); window.setTimeout(() => setMessages(old => old.filter(message => message.id !== item.id)), Number(item.mediaExpiry) * 1000) } }}><span>▧</span><strong>{item.opened ? 'Media opened' : item.text}</strong><small>{item.mediaExpiry === 'once' ? '1 · View once' : item.mediaExpiry === 'never' || !item.mediaExpiry ? 'Saved media' : `${item.mediaExpiry}s · tap to view`}</small></button> : item.kind === 'location' ? <div className="location-message"><span>⌖</span><strong>{item.text}</strong><small>Private chat location</small></div> : item.kind === 'poll' ? <div className="poll-message"><strong>{item.text}</strong><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted, pollVotes: (m.pollVotes || 0) + (m.voted ? -1 : 1) } : m))}>{item.voted ? '✓ Yes, works for me' : 'Yes, works for me'} <em>{item.pollVotes || 0}</em></button><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted } : m))}>Need another time</button><small>{item.pollVotes || 0} votes · public in this chat</small></div> : item.text}<div className="message-tools" /><span className="meta">{item.time} {item.mine ? '✓✓' : ''}</span></div></div>)}</div>
         <form className={`compose ${editing ? 'editing' : ''}`} onSubmit={(e) => { e.preventDefault(); send() }}>
           {(reply || editing) && <div className="compose-context"><Pencil size={17} /><span><strong>{editing ? 'Edit message' : 'Replying to Mark'}</strong><small>{(editing || reply)?.text.slice(0, 72)}</small></span><button type="button" onClick={() => { setEditing(null); setReply(null); setMessage('') }}><X size={17} /></button></div>}
@@ -435,6 +505,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
         <nav className="mobile-nav"><button className="active"><MessageCircle size={19} />Chats</button><button onClick={() => setSettingsOpen(true)}><CircleUserRound size={19} />Profile</button><button onClick={() => setSettingsOpen(true)}><Settings size={19} />Settings</button></nav>
       </section>
       {settingsOpen && <SettingsDrawer account={account} profile={profile} setProfile={setProfile} token={token} dark={dark} setDark={setDark} language={language} onLanguage={onLanguage} onClose={() => setSettingsOpen(false)} onLogout={logout} />}
+      {contactsOpen && <ContactsPanel contacts={contacts} onClose={() => setContactsOpen(false)} onSelect={contact => void startDirectChat(contact)} />}
       {richOpen && <RichComposerSheet language={language} onClose={() => setRichOpen(false)} onSend={addRich} />}
       {mediaFile && <MediaSendSheet file={mediaFile} language={language} onClose={() => setMediaFile(null)} onSend={mode => { void (async () => { const file = mediaFile; const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file) }); const upload = await fetch(`${API_URL}/attachments`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ name: file.name, mimeType: file.type, dataUrl }) }); if (upload.ok) { const attachment = await upload.json() as { id: string }; await deliver(`📷 ${file.name}`, 'media', mode, undefined, attachment.id) }; setMediaFile(null) })() }} />}
       {storyOpen && <div className="story-overlay" role="dialog" aria-modal="true" aria-label={`${storyOpen} story`} onClick={() => setStoryOpen(null)}><div className="story-card" onClick={e => e.stopPropagation()}><button aria-label="Close story" onClick={() => setStoryOpen(null)}><X size={19} /></button><div className="story-progress"><i /></div><div className="story-copy"><span className="avatar" style={{ background: storyOpen === 'Mark' ? '#6e4c97' : storyOpen === 'Nanda' ? '#9e2338' : '#bf8057' }}>{storyOpen[0]}</span><strong>{storyOpen}</strong><small>{language === 'RU' ? 'только что' : 'just now'}</small></div><p>{language === 'RU' ? 'Немного тишины между важными делами.' : 'A little quiet between important things.'}</p><small className="story-privacy"><ShieldCheck size={14} />{language === 'RU' ? 'История исчезнет через 24 часа' : 'This story disappears in 24 hours'}</small></div></div>}
@@ -445,13 +516,31 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       {confirm && <ConfirmModal action={confirm.action} name="Mark" onClose={() => setConfirm(null)} onConfirm={confirmAction} />}
       {messageMenu && <div className="floating-dismiss" onClick={() => setMessageMenu(null)}><div onClick={event => event.stopPropagation()}><MessageContextMenu mine={messageMenu.mine} time={messageMenu.time} onAction={handleMessageMenu} /></div></div>}
       {forwardMessage && <ForwardPanel onClose={() => setForwardMessage(null)} onForward={target => { addToChat(target, { id: crypto.randomUUID(), mine: true, sender: account.name, text: forwardMessage.text, time: 'now', reactions: [] }); setForwardMessage(null) }} />}
-      {createChannelOpen && <ChannelForm token={token} onClose={() => setCreateChannelOpen(false)} onSaved={channel => { setChannels(values => [channel, ...values]); const row: ChatRow = { id: channel.chat_id, name: channel.title, preview: 'No posts yet', time: '', initials: channel.title.slice(0, 1).toUpperCase(), color: '#9e2338', unread: 0, channel }; setChatRows(values => [row, ...values]); setChatMessages(values => ({ ...values, [channel.title]: [] })); openChat(channel.title); setCreateChannelOpen(false) }} />}
+      {createGroupOpen && <GroupForm token={token} onClose={() => setCreateGroupOpen(false)} onSaved={chat => { const row: ChatRow = { id: chat.id, name: chat.title, preview: '', time: '', initials: chat.title.slice(0, 1).toUpperCase(), color: '#4c8a83', unread: 0 }; setChatRows(rows => rows.some(item => item.id === row.id) ? rows : [row, ...rows]); setChatMessages(items => ({ ...items, [row.name]: [] })); setSelectedChat(row.name); setCreateGroupOpen(false) }} />}
+      {createChannelOpen && <ChannelForm token={token} onClose={() => setCreateChannelOpen(false)} onSaved={channel => { setChannels(values => values.some(item => item.id === channel.id) ? values : [channel, ...values]); const row: ChatRow = { id: channel.chat_id, name: channel.title, preview: '', time: '', initials: channel.title.slice(0, 1).toUpperCase(), color: '#9e2338', unread: 0, channel }; setChatRows(values => values.some(item => item.id === row.id) ? values : [row, ...values]); setChatMessages(values => ({ ...values, [channel.title]: values[channel.title] || [] })); openChat(channel.title); setCreateChannelOpen(false) }} />}
       {channelInfoOpen && selectedChannel && <ChannelInfo channel={selectedChannel} muted={channelMuted} token={token} onClose={() => setChannelInfoOpen(false)} onMute={() => setChannelMuted(value => !value)} onManage={() => { setChannelInfoOpen(false); setChannelEditOpen(true) }} onSubscribed={channel => { setChannels(values => values.map(value => value.id === channel.id ? channel : value)); setChatRows(values => values.some(row => row.id === channel.chat_id) ? values.map(row => row.id === channel.chat_id ? { ...row, channel } : row) : [{ id: channel.chat_id, name: channel.title, preview: 'No posts yet', time: '', initials: channel.title.slice(0, 1).toUpperCase(), color: '#9e2338', unread: 0, channel }, ...values]); setChatMessages(values => ({ ...values, [channel.title]: values[channel.title] || [] })) }} />}
       {channelEditOpen && selectedChannel && <ChannelForm channel={selectedChannel} token={token} onClose={() => setChannelEditOpen(false)} onSaved={channel => { setChannels(values => values.map(value => value.id === channel.id ? channel : value)); setChatRows(values => values.map(row => row.id === channel.chat_id ? { ...row, name: channel.title, channel } : row)); if (selectedChat !== channel.title) setSelectedChat(channel.title); setChannelEditOpen(false) }} />}
-      {menuOpen && <div className="menu-overlay" onClick={() => { setMenuOpen(false); setMenuStub(null) }}><aside className="main-menu telegram-menu" onClick={e => e.stopPropagation()}>{menuStub ? <><header className="menu-stub-head"><button aria-label="Back to main menu" onClick={() => setMenuStub(null)}><ChevronLeft size={19} /></button><strong>{menuStub}</strong><button aria-label="Close menu" onClick={() => { setMenuOpen(false); setMenuStub(null) }}><X size={18} /></button></header><div className="menu-stub-body"><div className="menu-stub-icon"><MessageCircle size={25} /></div><h3>{menuStub}</h3><p>{menuStub === 'Contacts' ? 'Your trusted contacts will appear here. Import stays on-device in this privacy-first messenger.' : `${menuStub} is ready as a focused Chettik messenger flow.`}</p><button onClick={() => setMenuStub(null)}>Back to menu</button></div></> : <><button className="menu-close" aria-label="Close menu" onClick={() => setMenuOpen(false)}><X size={18} /></button><button className="menu-user" onClick={() => { setMenuOpen(false); setProfileAccount(account); setProfileOpen(true) }}><div className="avatar" style={{ background: account.color }}>{account.initials}</div><span><strong>{account.name}</strong><small>Set emoji status · {account.username}</small></span><ArrowRight size={17} /></button><div className="menu-links"><button onClick={() => { setMenuOpen(false); setProfileAccount(account); setProfileOpen(true) }}><CircleUserRound size={19} />My Profile</button><button onClick={() => setMenuStub('New Group')}><Users size={19} />New Group</button><button onClick={() => { setMenuOpen(false); setCreateChannelOpen(true) }}><MessageCircle size={19} />New Channel</button><button onClick={() => setMenuStub('Contacts')}><Users size={19} />Contacts</button><button onClick={() => { setMenuOpen(false); openChat('Saved Messages') }}><Pin size={19} />Saved Messages</button><button onClick={() => { setMenuOpen(false); setSettingsOpen(true) }}><Settings size={19} />Settings</button></div><button className="night-row" onClick={() => setDark(!dark)}><span>{dark ? <Moon size={19} /> : <Sun size={19} />}{dark ? 'Night Mode' : 'Day Mode'}</span><span className={`switch ${dark ? 'on' : ''}`}><i /></span></button><footer>Chettik Web<br /><small>Private by instinct</small></footer></>}</aside></div>}
+      {menuOpen && <div className="menu-overlay" onClick={() => setMenuOpen(false)}><aside className="main-menu telegram-menu" onClick={e => e.stopPropagation()}><button className="menu-close" aria-label="Close menu" onClick={() => setMenuOpen(false)}><X size={18} /></button><button className="menu-user" onClick={() => { setMenuOpen(false); setProfileAccount(account); setProfileOpen(true) }}><div className="avatar" style={{ background: account.color }}>{account.initials}</div><span><strong>{account.name}</strong><small>{account.username}</small></span><ArrowRight size={17} /></button><div className="menu-links"><button onClick={() => { setMenuOpen(false); void openContacts() }}><MessageCircle size={19} />New chat</button><button onClick={() => { setMenuOpen(false); setCreateGroupOpen(true) }}><Users size={19} />New group</button><button onClick={() => { setMenuOpen(false); setCreateChannelOpen(true) }}><MessageCircle size={19} />New channel</button><button onClick={() => { setMenuOpen(false); void openContacts() }}><Users size={19} />Contacts</button><button onClick={() => { setMenuOpen(false); openChat('Saved Messages') }}><Pin size={19} />Saved messages</button><button onClick={() => { setMenuOpen(false); setSettingsOpen(true) }}><Settings size={19} />Settings</button></div><button className="night-row" onClick={() => setDark(!dark)}><span>{dark ? <Moon size={19} /> : <Sun size={19} />}{dark ? 'Night Mode' : 'Day Mode'}</span><span className={`switch ${dark ? 'on' : ''}`}><i /></span></button><footer>Chettik Web<br /><small>Private by instinct</small></footer></aside></div>}
     </div>
       {chatMenu && <div className="floating-dismiss" onClick={() => setChatMenu(null)}><div onClick={event => event.stopPropagation()}><ChatContextMenu name={chatMenu.name} pinned={chatPinned} muted={chatMuted} onAction={handleChatMenu} style={{ left: chatMenu.x, top: chatMenu.y }} /></div></div>}
   </div>
+}
+
+function ContactsPanel({ contacts, onClose, onSelect }: { contacts: Account[]; onClose: () => void; onSelect: (contact: Account) => void }) {
+  return <div className="contacts-overlay" role="dialog" aria-modal="true" aria-label="Contacts" onClick={onClose}><section className="contacts-panel" onClick={event => event.stopPropagation()}><header><strong>Contacts</strong><button aria-label="Close contacts" onClick={onClose}><X size={19} /></button></header><p>Choose someone to start a private conversation.</p><div>{contacts.map(contact => <button key={contact.id} onClick={() => onSelect(contact)}><span className="avatar" style={{ background: contact.color }}>{contact.initials}</span><span><strong>{contact.name}</strong><small>{contact.username}</small></span><ArrowRight size={17} /></button>)}</div></section></div>
+}
+
+function GroupForm({ token, onClose, onSaved }: { token: string; onClose: () => void; onSaved: (chat: { id: string; title: string }) => void }) {
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [notice, setNotice] = useState('')
+  const save = async () => {
+    const response = await fetch(`${API_URL}/groups`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ title, description, createChat: true }) })
+    const group = await response.json() as { primaryChatId?: string; title?: string; error?: string }
+    if (!response.ok || !group.primaryChatId || !group.title) return setNotice(group.error || 'Group could not be created')
+    onSaved({ id: group.primaryChatId, title: group.title })
+  }
+  return <div className="contacts-overlay" role="dialog" aria-modal="true" aria-label="New group" onClick={onClose}><form className="contacts-panel group-create" onClick={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); void save() }}><header><strong>New group</strong><button type="button" aria-label="Close new group" onClick={onClose}><X size={19} /></button></header><label>Group name<input aria-label="Group name" value={title} onChange={event => setTitle(event.target.value)} placeholder="Weekend plans" autoFocus required /></label><label>Description <span>optional</span><textarea aria-label="Group description" value={description} onChange={event => setDescription(event.target.value)} placeholder="What is this group for?" /></label>{notice && <p className="form-notice">{notice}</p>}<button className="channel-primary" type="submit">Create group</button></form></div>
 }
 
 function ChannelForm({ token, channel, onClose, onSaved }: { token: string; channel?: Channel; onClose: () => void; onSaved: (channel: Channel) => void }) {

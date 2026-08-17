@@ -77,30 +77,33 @@ const insertPrivacy = db.prepare('INSERT OR IGNORE INTO privacy_settings (user_i
 const insertProfile = db.prepare('INSERT OR IGNORE INTO profiles (user_id) VALUES (?)')
 const insertDevice = db.prepare('INSERT OR IGNORE INTO devices (id, user_id, label) VALUES (?, ?, ?)')
 for (const user of users) { insertUser.run(...user); insertPrivacy.run(user[0]); insertProfile.run(user[0]); insertDevice.run(`${user[0]}-local`, user[0], 'Windows • Chrome') }
-const seedBadges: Record<string, string[]> = { nanda: ['staff', 'early-supporter', 'official', 'crimson-circle'], mark: ['staff', 'early-supporter', 'ember-house'], alisher: ['early-supporter', 'aurora-house'] }
-for (const [id, badges] of Object.entries(seedBadges)) db.prepare('UPDATE users SET badges_json = ? WHERE id = ?').run(JSON.stringify(badges), id)
+db.prepare("UPDATE users SET badges_json = '[]' WHERE id IN ('nanda', 'mark', 'alisher')").run()
 db.prepare("UPDATE devices SET label = 'Windows • Chrome' WHERE id LIKE '%-local'").run()
-const seedChat = (id: string, title: string, type: string, members: string[]) => {
-  db.prepare('INSERT OR IGNORE INTO chats (id, title, type) VALUES (?, ?, ?)').run(id, title, type)
-  const join = db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)')
-  members.forEach(member => join.run(id, member))
+const removeLegacyShowcaseData = db.transaction(() => {
+  const legacyIds = db.prepare("SELECT id FROM chats WHERE id IN ('nanda-mark', 'nanda-alisher', 'design-circle') OR title IN ('Design circle', 'Product Notes')").all() as Array<{ id: string }>
+  const chatIds = legacyIds.map(chat => chat.id)
+  if (chatIds.length) {
+    const placeholders = chatIds.map(() => '?').join(',')
+    db.prepare(`DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE chat_id IN (${placeholders}))`).run(...chatIds)
+    db.prepare(`DELETE FROM chat_pins WHERE chat_id IN (${placeholders})`).run(...chatIds)
+    db.prepare(`DELETE FROM messages WHERE chat_id IN (${placeholders})`).run(...chatIds)
+    db.prepare(`DELETE FROM chat_members WHERE chat_id IN (${placeholders})`).run(...chatIds)
+    db.prepare(`DELETE FROM channels WHERE chat_id IN (${placeholders})`).run(...chatIds)
+    db.prepare(`DELETE FROM groups WHERE primary_chat_id IN (${placeholders})`).run(...chatIds)
+    db.prepare(`DELETE FROM chats WHERE id IN (${placeholders})`).run(...chatIds)
+  }
+  db.prepare("DELETE FROM messages WHERE id LIKE 'seed-%'").run()
+  db.prepare("DELETE FROM group_members WHERE group_id = 'design-circle'").run()
+  db.prepare("DELETE FROM groups WHERE id = 'design-circle'").run()
+})
+removeLegacyShowcaseData()
+const ensureSavedChat = db.prepare("INSERT OR IGNORE INTO chats (id, title, type) VALUES (?, 'Saved Messages', 'saved')")
+const ensureSavedMember = db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)')
+for (const [userId] of users) {
+  const chatId = `saved-${userId}`
+  ensureSavedChat.run(chatId)
+  ensureSavedMember.run(chatId, userId)
 }
-seedChat('nanda-mark', 'Mark', 'direct', ['nanda', 'mark'])
-seedChat('design-circle', 'Design circle', 'group', ['nanda', 'mark', 'alisher'])
-seedChat('nanda-alisher', 'Alisher', 'direct', ['nanda', 'alisher'])
-users.forEach(([id]) => seedChat(`saved-${id}`, 'Saved Messages', 'saved', [id]))
-const joinEverySeedChat = db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)')
-for (const chatId of ['nanda-mark', 'design-circle', 'nanda-alisher', 'saved-nanda', 'saved-mark', 'saved-alisher']) {
-  for (const [userId] of users) joinEverySeedChat.run(chatId, userId)
-}
-db.prepare("INSERT OR IGNORE INTO groups (id, title, description, owner_id, primary_chat_id) VALUES ('design-circle', 'Design circle', 'A calm place for thoughtful product reviews.', 'nanda', 'design-circle')").run()
-for (const [id] of users) db.prepare("INSERT OR IGNORE INTO group_members (group_id, user_id, role) VALUES ('design-circle', ?, ?)").run(id, id === 'nanda' ? 'owner' : 'member')
-db.prepare("INSERT OR IGNORE INTO sticker_packs (id, owner_id, title, author, visibility, share_code) VALUES ('chettik-starters', 'nanda', 'Chettik starters', 'Chettik', 'public', 'CHETTIK1')").run()
-db.prepare("INSERT OR IGNORE INTO stickers (id, pack_id, owner_id, name, mime_type, data_url, position) VALUES ('chettik-heart', 'chettik-starters', 'nanda', 'Crimson heart', 'image/svg+xml', ?, 0)").run('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Ctext y=".9em" font-size="90"%3E❤️%3C/text%3E%3C/svg%3E')
-const seedMessage = db.prepare('INSERT OR IGNORE INTO messages (id, chat_id, sender_id, text, kind) VALUES (?, ?, ?, ?, ?)')
-seedMessage.run('seed-mark-1', 'nanda-mark', 'mark', 'I tried the new onboarding flow. It feels really calm.', 'text')
-seedMessage.run('seed-nanda-1', 'nanda-mark', 'nanda', 'That was the idea. Less noise, more space for people.', 'text')
-seedMessage.run('seed-saved-nanda-1', 'saved-nanda', 'nanda', 'Remember to write this down.', 'text')
 
 type SessionUser = { id: string; name: string; username: string; role: string; email: string; initials: string; color: string }
 function publicUser(user: SessionUser & { badges_json?: string }) {
@@ -211,15 +214,36 @@ app.post('/api/auth/logout', (request, response) => {
   if (token) db.prepare("UPDATE sessions SET revoked_at = datetime('now') WHERE token = ?").run(token)
   response.status(204).end()
 })
+app.get('/api/users', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const people = db.prepare('SELECT * FROM users WHERE id != ? ORDER BY name COLLATE NOCASE').all(user.id) as Array<SessionUser & { badges_json: string }>
+  response.json(people.map(publicUser))
+})
+app.post('/api/chats/direct', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const { userId } = request.body as { userId?: string }
+  const recipient = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as SessionUser | undefined
+  if (!recipient || recipient.id === user.id) return response.status(400).json({ error: 'Choose another Chettik user' })
+  const [first, second] = [user.id, recipient.id].sort()
+  const chatId = `direct-${first}-${second}`
+  const create = db.transaction(() => {
+    db.prepare("INSERT OR IGNORE INTO chats (id, title, type) VALUES (?, ?, 'direct')").run(chatId, recipient.name)
+    db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)').run(chatId, user.id)
+    db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)').run(chatId, recipient.id)
+  })
+  create()
+  response.status(201).json({ id: chatId, title: recipient.name, type: 'direct', participant: publicUser(recipient), preview: '', last_message_at: null })
+})
 app.get('/api/chats', (request, response) => {
   const user = requireSession(request, response); if (!user) return
   const chats = db.prepare(`
-    SELECT c.*, COALESCE((SELECT m.text FROM messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1), '') AS preview,
+    SELECT c.*, COALESCE(CASE WHEN c.type = 'direct' THEN (SELECT u.name FROM users u JOIN chat_members cm2 ON cm2.user_id = u.id WHERE cm2.chat_id = c.id AND u.id != ? LIMIT 1) ELSE c.title END, c.title) AS title,
+    COALESCE((SELECT m.text FROM messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1), '') AS preview,
     (SELECT m.created_at FROM messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_at
     FROM chats c JOIN chat_members cm ON cm.chat_id = c.id
     WHERE cm.user_id = ? AND (c.type != 'saved' OR c.id = 'saved-' || ?)
     ORDER BY COALESCE(last_message_at, '') DESC, c.title
-  `).all(user.id, user.id)
+  `).all(user.id, user.id, user.id)
   response.json(chats)
 })
 app.get('/api/groups', (request, response) => {
