@@ -37,8 +37,6 @@ Approval gate: test the local Stage 2 demo and its persistence/moderation flows 
 2. Native iOS/Android Telegram-like shell and desktop Discord-like shell.
 3. Accessibility, localization review, telemetry with privacy controls and launch-readiness testing.
 
-## Stage 5 — Later extensions
+## Deferred indefinitely
 
-1. User bots and bot platform.
-2. Optional programmer-only GitHub repository/PR layer.
-3. No VS Code/Cursor integration and no calls in the currently approved scope.
+Chettik is a messenger, not a developer workspace. User bots, repository/PR panels, and VS Code/Cursor integrations are out of product scope. Calls are also out of the currently approved scope.

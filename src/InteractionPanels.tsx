@@ -58,7 +58,7 @@ export function ChatContextMenu({ pinned, muted, onAction }: { name: string; pin
 
 export function MessageContextMenu({ mine, time, onAction }: { mine: boolean; time: string; onAction: (action: string) => void }) {
   const items = [['reply', 'Reply', <MessageCircle size={17} />], ...(mine ? [['edit', 'Edit', <Edit3 size={17} />]] : []), ['pin', 'Pin', <Pin size={17} />], ['copy', 'Copy text', <Copy size={17} />], ['forward', 'Forward', <Forward size={17} />], ['select', 'Select', <Check size={17} />], ['delete-message', 'Delete', <Trash2 size={17} />]]
-  return <div className="context-menu message-context" role="menu"><div className="reaction-bar">{['❤️', '👍', '🔥', '😂', '😮'].map(emoji => <button key={emoji} onClick={() => onAction(`react-${emoji}`)}>{emoji}</button>)}</div>{items.map(([action, label, icon]) => <button className={action === 'delete-message' ? 'danger-item' : ''} key={action as string} onClick={() => onAction(action as string)}>{icon}{label}</button>)}<footer><span>{time}</span><span>✓✓</span></footer></div>
+  return <div className="context-menu message-context" role="menu"><div className="reaction-bar">{['❤️', '👌', '🤔', '👍', '👎', '🔥', '＋'].map(emoji => <button key={emoji} aria-label={emoji === '＋' ? 'More reactions' : `React ${emoji}`} onClick={() => emoji !== '＋' && onAction(`react-${emoji}`)}>{emoji}</button>)}</div>{items.map(([action, label, icon]) => <button className={action === 'delete-message' ? 'danger-item' : ''} key={action as string} onClick={() => onAction(action as string)}>{icon}{label}</button>)}<footer><span>{time}</span><span>✓✓</span></footer></div>
 }
 
 export function ForwardPanel({ onClose, onForward }: { onClose: () => void; onForward: (target: Exclude<ChatName, 'Mark'>) => void }) {

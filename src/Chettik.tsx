@@ -2,8 +2,7 @@ import { ArrowLeft, ArrowRight, Bot, Check, ChevronLeft, CircleUserRound, Flag, 
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { SettingsDrawer } from './Stage3Panels'
-import { DeliveryPanel, MediaSendSheet, type MediaExpiry, RichComposerSheet, VoiceButton } from './Stage4Panels'
-import { Stage5Panel } from './Stage5Panel'
+import { MediaSendSheet, type MediaExpiry, RichComposerSheet, VoiceButton } from './Stage4Panels'
 import { ChatContextMenu, ConfirmModal, type ConfirmAction, ForwardPanel, MessageContextMenu, ProfilePanel } from './InteractionPanels'
 
 export type Account = {
@@ -150,7 +149,6 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [richOpen, setRichOpen] = useState(false)
-  const [deliveryOpen, setDeliveryOpen] = useState(false)
   const [recording, setRecording] = useState(false)
   const [recordingMode, setRecordingMode] = useState<'voice' | 'circle'>('voice')
   const [storyOpen, setStoryOpen] = useState<string | null>(null)
@@ -166,6 +164,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const [chatMuted, setChatMuted] = useState(false)
   const [chatUnread, setChatUnread] = useState(false)
   const [menuStub, setMenuStub] = useState<string | null>(null)
+  const [chatListWidth, setChatListWidth] = useState(() => Number(localStorage.getItem('chettik-chat-list-width')) || 300)
   const fileInput = useRef<HTMLInputElement>(null)
   const messages = chatMessages[selectedChat]
   const logout = () => {
@@ -250,6 +249,20 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       .catch(() => undefined)
   }, [profileAccount, profileOpen, token])
   useEffect(() => { const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setMenuOpen(false); setMenuStub(null) } }; window.addEventListener('keydown', closeOnEscape); return () => window.removeEventListener('keydown', closeOnEscape) }, [])
+  useEffect(() => {
+    const sidebar = document.querySelector<HTMLElement>('.sidebar')
+    if (!sidebar) return
+    sidebar.style.width = `${Math.max(240, Math.min(420, chatListWidth))}px`
+    const observer = new ResizeObserver(() => {
+      const width = Math.round(sidebar.getBoundingClientRect().width)
+      if (width >= 240 && width <= 420) {
+        localStorage.setItem('chettik-chat-list-width', String(width))
+        setChatListWidth(width)
+      }
+    })
+    observer.observe(sidebar)
+    return () => observer.disconnect()
+  }, [chatListWidth])
   const addRich = (kind: MessageKind) => {
     const text = kind === 'poll' ? 'Team sync at 15:00?' : kind === 'location' ? 'Moscow Avenue · precise location' : 'A quiet moment from the studio'
     void deliver(text, kind)
@@ -323,8 +336,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   }
   const matches = messages.filter(m => m.text.toLowerCase().includes(search.toLowerCase()))
   if (page === 'admin') return <AdminPage account={account} reports={reports} clearReports={() => setReports([])} onBack={() => setPage('chat')} />
-  if (page === 'stage5') return <Stage5Panel account={account} onBack={() => setPage('chat')} />
-  return <div className={`app ${dark ? 'dark' : ''}`}>
+  return <div className={`app ${dark ? 'dark' : ''}`} onClick={() => { setMessageMenu(null); setChatMenu(false); setEmojiOpen(false) }}>
     <div className="app-shell">
       <nav className="rail"><img className="mark" src="/logo.svg" alt="Chettik" /><button className="rail-btn active" aria-label="Open main menu" onClick={() => setMenuOpen(true)}><Menu size={21} /></button><button className="rail-btn" aria-label="Open saved messages" onClick={() => openChat('Saved Messages')}><Pin size={19} /></button><div className="rail-spacer" />{account.role !== 'User' && <button className="rail-btn" title="Operations console" onClick={() => setPage('admin')}><ShieldAlert size={19} /></button>}<button className="avatar me" aria-label="Open my profile" title={account.name} onClick={() => { setProfileAccount(account); setProfileOpen(true) }}>{account.initials}</button></nav>
       <aside className="sidebar"><div className="side-top"><div className="wordmark"><img src="/logo.svg" alt="" />chett<span>i</span>k</div><button className="icon-btn" aria-label="New chat"><MessageCircle size={19} /></button></div><label className="search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder={language === 'RU' ? 'Поиск сообщений' : 'Search messages'} /></label><div className="stories" aria-label={language === 'RU' ? 'Истории' : 'Stories'}>{[{ name: 'Mark', initials: 'M', color: '#6e4c97' }, { name: 'Nanda', initials: 'N', color: '#9e2338' }, { name: 'Alisher', initials: 'A', color: '#bf8057' }].map(story => <button className="story" key={story.name} onClick={() => setStoryOpen(story.name)}><span className="avatar" style={{ background: story.color }}>{story.initials}</span><span>{story.name}</span></button>)}</div><div className="list-title">Cloud chats · {matches.length} matches</div><div className="chat-list">{chatRows.map(chat => <button onClick={() => openChat(chat.name)} onContextMenu={event => { if (chat.name === 'Mark') { event.preventDefault(); setChatMenu(true) } }} className={`chat-row ${selectedChat === chat.name ? 'active' : ''}`} key={chat.id}><div className="avatar" style={{ background: chat.color }}>{chat.initials}</div><div className="chat-copy"><div className="chat-name">{chat.name}{chat.name === 'Mark' && chatPinned ? <Pin size={11} /> : null}<span className="time">{chat.time}</span></div><div className="chat-preview">{chatMuted && chat.name === 'Mark' ? 'Muted' : chat.preview}</div></div>{(chat.unread || (chat.name === 'Mark' && chatUnread)) ? <span className="unread">{chat.name === 'Mark' && chatUnread ? 1 : chat.unread}</span> : null}</button>)}</div>{chatMenu && <ChatContextMenu name="Mark" pinned={chatPinned} muted={chatMuted} onAction={handleChatMenu} />}</aside>
@@ -339,8 +351,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
         </form>
         <nav className="mobile-nav"><button className="active"><MessageCircle size={19} />Chats</button><button onClick={() => setSettingsOpen(true)}><CircleUserRound size={19} />Profile</button><button onClick={() => setSettingsOpen(true)}><Settings size={19} />Settings</button></nav>
       </section>
-      {settingsOpen && <SettingsDrawer account={account} profile={profile} setProfile={setProfile} token={token} dark={dark} setDark={setDark} language={language} onLanguage={onLanguage} onDelivery={() => setDeliveryOpen(true)} onClose={() => setSettingsOpen(false)} onLogout={logout} />}
-      {deliveryOpen && <DeliveryPanel language={language} enabled={!!profile.pushEnabled} telemetry={!!profile.telemetryEnabled} onChange={patch => setProfile({ ...profile, pushEnabled: patch.push ?? profile.pushEnabled, telemetryEnabled: patch.telemetry ?? profile.telemetryEnabled })} onClose={() => setDeliveryOpen(false)} />}
+      {settingsOpen && <SettingsDrawer account={account} profile={profile} setProfile={setProfile} token={token} dark={dark} setDark={setDark} language={language} onLanguage={onLanguage} onClose={() => setSettingsOpen(false)} onLogout={logout} />}
       {richOpen && <RichComposerSheet language={language} onClose={() => setRichOpen(false)} onSend={addRich} />}
       {mediaFile && <MediaSendSheet file={mediaFile} language={language} onClose={() => setMediaFile(null)} onSend={mode => { void deliver(`📷 ${mediaFile.name}`, 'media', mode); setMediaFile(null) }} />}
       {storyOpen && <div className="story-overlay" role="dialog" aria-modal="true" aria-label={`${storyOpen} story`} onClick={() => setStoryOpen(null)}><div className="story-card" onClick={e => e.stopPropagation()}><button aria-label="Close story" onClick={() => setStoryOpen(null)}><X size={19} /></button><div className="story-progress"><i /></div><div className="story-copy"><span className="avatar" style={{ background: storyOpen === 'Mark' ? '#6e4c97' : storyOpen === 'Nanda' ? '#9e2338' : '#bf8057' }}>{storyOpen[0]}</span><strong>{storyOpen}</strong><small>{language === 'RU' ? 'только что' : 'just now'}</small></div><p>{language === 'RU' ? 'Немного тишины между важными делами.' : 'A little quiet between important things.'}</p><small className="story-privacy"><ShieldCheck size={14} />{language === 'RU' ? 'История исчезнет через 24 часа' : 'This story disappears in 24 hours'}</small></div></div>}
