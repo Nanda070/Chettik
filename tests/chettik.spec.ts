@@ -20,12 +20,12 @@ test('seed account sends and edits inside the composer', async ({ page }) => {
   await login(page)
   await page.getByRole('textbox', { name: 'Message text' }).fill('A polished local message')
   await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText('A polished local message')).toBeVisible()
+  await expect(page.getByText('A polished local message').last()).toBeVisible()
   await page.getByRole('button', { name: 'Edit message' }).last().click()
   await expect(page.getByText('Edit message')).toBeVisible()
   await page.getByRole('textbox', { name: 'Message text' }).fill('Edited without browser dialogs')
   await page.getByRole('button', { name: 'Save message' }).click()
-  await expect(page.getByText('Edited without browser dialogs')).toBeVisible()
+  await expect(page.getByText('Edited without browser dialogs').last()).toBeVisible()
 })
 
 test('settings privacy, devices, language and theme work', async ({ page }, testInfo) => {

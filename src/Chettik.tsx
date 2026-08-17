@@ -37,6 +37,8 @@ export type Profile = {
   autoDelete?: string; scheduledEnabled?: boolean; timedMedia?: boolean; viewOnce?: boolean; pushEnabled?: boolean; telemetryEnabled?: boolean
 }
 const STORE = 'chettik-stage-2'
+const API_URL = 'http://127.0.0.1:8787/api'
+const SESSION_KEY = 'chettik-api-session'
 const credits = {
   ru: { dev: 'Разработчик и основатель: Nanda, Discord: nandak070, Telegram: nanda070', mark: 'Разработчик: Mark, Discord: schizophrenogenic', contact: 'Связь', all: 'Nanda · Email: adnan.huseynli1@gmail.com · Телефон: +41-77-259-9608 · Discord: nandak070 · Telegram: nanda070' },
   en: { dev: 'Developer & founder: Nanda, Discord: nandak070, Telegram: nanda070', mark: 'Developer: Mark, Discord: schizophrenogenic', contact: 'Contact', all: 'Nanda · Email: adnan.huseynli1@gmail.com · Phone: +41-77-259-9608 · Discord: nandak070 · Telegram: nanda070' },
@@ -86,7 +88,7 @@ export default function Chettik() {
 
   const requestOtp = () => { if (/^\+\d{10,15}$/.test(phone.replace(/\s/g, ''))) { setAuthNotice(''); setPicked(seedAccounts.find(a => a.phone === phone.replace(/\s/g, '')) ?? { ...seedAccounts[2], phone: phone.replace(/\s/g, ''), name: 'New user', username: '@new' }) } else setAuthNotice(tr.invalid) }
   if (legal) return <LegalPage doc={legal} language={language} dark={dark} onBack={() => setLegal(null)} />
-  if (session) return <Messenger account={session} dark={dark} setDark={setDark} language={language} onLanguage={() => setLanguage(ru ? 'EN' : 'RU')} onLogout={() => setSession(null)} />
+  if (session) return <Messenger account={session} dark={dark} setDark={setDark} language={language} onLanguage={() => setLanguage(ru ? 'EN' : 'RU')} onLogout={() => { localStorage.removeItem(SESSION_KEY); setSession(null) }} />
   return <main className={`auth-screen ${dark ? 'dark' : ''}`}>
     <section className="desktop-login"><header><button aria-label="Back" onClick={() => setDesktopLogin('qr')}><ChevronLeft size={20} /></button><button onClick={() => setDesktopLogin('settings')}>SETTINGS</button></header>{desktopLogin === 'settings' ? <div className="desktop-login-card"><img src="/logo.svg" alt="" /><h1>{ru ? 'Настройки входа' : 'Login settings'}</h1><p>{ru ? 'Язык и тема сохраняются локально на этом устройстве.' : 'Language and appearance are stored only on this device.'}</p><button className="desktop-outline" onClick={() => setLanguage(ru ? 'EN' : 'RU')}>{language === 'RU' ? 'English' : 'Русский'}</button><button className="desktop-outline" onClick={() => setDark(!dark)}>{dark ? 'Light mode' : 'Dark mode'}</button></div> : desktopLogin === 'passkey' ? <div className="desktop-login-card"><div className="desktop-passkey">⌁</div><h1>{ru ? 'Войти с ключом доступа' : 'Log in with a passkey'}</h1><p>{ru ? 'В локальной демо-версии ключи доступа настраиваются после входа. Используйте QR или номер телефона.' : 'Passkeys are configured after sign-in in this local demo. Use QR or your phone number.'}</p><button className="desktop-primary" onClick={() => setDesktopLogin('qr')}>{ru ? 'К QR-коду' : 'Back to QR'}</button></div> : desktopLogin === 'phone' ? <div className="desktop-login-card phone-login">{!picked ? <><h1>{ru ? 'Ваш номер телефона' : 'Your Phone Number'}</h1><p>{ru ? 'Подтвердите код страны и введите номер телефона.' : 'Please confirm your country code and enter your phone number.'}</p><label>{ru ? 'Страна' : 'Country'}<select aria-label="Country"><option>Russia</option><option>Azerbaijan</option><option>United States</option></select></label><form onSubmit={e => { e.preventDefault(); requestOtp() }}><input className="phone-code" value="+7" readOnly aria-label="Country code" /><input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+11111111111" aria-label="Phone number" required /><button className="desktop-primary" type="submit">{ru ? 'Далее' : 'Next'}</button></form><button className="desktop-link" onClick={() => setDesktopLogin('qr')}>{ru ? 'Быстрый вход по QR-коду' : 'Quick log in using QR code'}</button><div className="seed-login">{seedAccounts.map(item => <button key={item.phone} onClick={() => { setPhone(item.phone); setPicked(item) }}>{item.name}</button>)}</div>{authNotice && <p className="form-notice">{authNotice}</p>}</> : <><div className="avatar" style={{ background: picked.color }}>{picked.initials}</div><h1>{ru ? 'Подтвердите вход' : 'Confirm sign in'}</h1><p>{picked.phone} · {ru ? 'Введите любые 4–6 цифр из локальной SMS-заглушки.' : 'Enter any 4–6 digits from the local SMS stub.'}</p><form onSubmit={e => { e.preventDefault(); if (otp.length >= 4) setSession(picked); else setAuthNotice(tr.code) }}><input value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} aria-label="Desktop OTP" placeholder="••••••" autoFocus /><button className="desktop-primary">{ru ? 'Войти' : 'Sign in'}</button></form><button className="desktop-link" onClick={() => { setPicked(null); setOtp('') }}>{ru ? 'Изменить номер' : 'Change number'}</button></>}</div> : <div className="desktop-login-card qr-login"><div className="desktop-qr"><QrCode size={154} strokeWidth={1.25} /><img src="/logo.svg" alt="Chettik" /></div><h1>{ru ? 'Сканируйте в мобильном Chettik' : 'Scan From Mobile Chettik'}</h1><ol><li>{ru ? 'Откройте Chettik на телефоне' : 'Open Chettik on your phone'}</li><li>{ru ? 'Настройки → Устройства → Добавить устройство' : 'Go to Settings → Devices → Add Device'}</li><li>{ru ? 'Сканируйте код для входа' : 'Scan this code to log in'}</li></ol><button className="desktop-link" onClick={() => setDesktopLogin('phone')}>{ru ? 'Войти по номеру телефона' : 'Log in using phone number'}</button><button className="desktop-link" onClick={() => setDesktopLogin('passkey')}>{ru ? 'Войти с ключом доступа' : 'Log in using passkey'}</button><button className="qr-demo" onClick={() => setSession(seedAccounts[0])}>{ru ? 'Демо: подключить Nanda' : 'Demo: pair Nanda device'}</button></div>}</section>
     <div className="auth-ambient one" /><div className="auth-ambient two" />
@@ -173,6 +175,34 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const canViewPhone = profileAccount.phone === account.phone
     || (!phoneExceptions?.never.includes(account.name) && (phoneExceptions?.always.includes(account.name) || phoneAudience === 'Everybody' || (phoneAudience === 'Contacts' && seedAccounts.some(item => item.phone === account.phone))))
   useEffect(() => persist(account, { chatMessages, profile, reports }), [account, chatMessages, profile, reports])
+  useEffect(() => {
+    let disposed = false
+    const connect = async () => {
+      let token = localStorage.getItem(SESSION_KEY)
+      if (!token) {
+        const response = await fetch(`${API_URL}/auth/otp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: account.phone, code: '123456' }) })
+        if (!response.ok) return
+        token = (await response.json() as { token: string }).token
+        localStorage.setItem(SESSION_KEY, token)
+      }
+      const response = await fetch(`${API_URL}/chats/nanda-mark/messages`, { headers: { Authorization: `Bearer ${token}` } })
+      if (!response.ok || disposed) return
+      const remote = await response.json() as Array<{ id: string; sender_id: string; sender_name: string; text: string; kind: MessageKind; created_at: string }>
+      setChatMessages(current => ({ ...current, Mark: remote.map(item => ({ id: item.id, sender: item.sender_name, text: item.text, time: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), mine: item.sender_name === account.name, reactions: [], kind: item.kind === 'text' ? undefined : item.kind })) }))
+    }
+    connect().catch(() => undefined)
+    return () => { disposed = true }
+  }, [account])
+  useEffect(() => {
+    const socket = new WebSocket('ws://127.0.0.1:8787/api/ws')
+    socket.onmessage = event => {
+      const payload = JSON.parse(event.data) as { type: string; message?: { id: string; chat_id: string; sender_name: string; text: string; kind: MessageKind; created_at: string } }
+      if (payload.type !== 'message.created' || payload.message?.chat_id !== 'nanda-mark') return
+      const item = payload.message
+      setChatMessages(current => current.Mark.some(message => message.id === item.id) ? current : ({ ...current, Mark: [...current.Mark, { id: item.id, sender: item.sender_name, text: item.text, time: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), mine: item.sender_name === account.name, reactions: [], kind: item.kind === 'text' ? undefined : item.kind }] }))
+    }
+    return () => socket.close()
+  }, [account])
   useEffect(() => { const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setMenuOpen(false); setMenuStub(null) } }; window.addEventListener('keydown', closeOnEscape); return () => window.removeEventListener('keydown', closeOnEscape) }, [])
   const addRich = (kind: MessageKind) => {
     const text = kind === 'poll' ? 'Team sync at 15:00?' : kind === 'location' ? 'Moscow Avenue · precise location' : 'A quiet moment from the studio'
@@ -213,7 +243,22 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     else if (action.startsWith('react-')) setMessages(old => old.map(item => item.id === selected.id ? { ...item, reactions: [...item.reactions, action.slice(6)] } : item))
     setMessageMenu(null)
   }
-  const send = () => { const text = message.trim(); if (!text || text.length > 4000) return; if (editing) setMessages(old => old.map(item => item.id === editing.id ? { ...item, text, edited: true } : item)); else setMessages(old => [...old, { id: crypto.randomUUID(), mine: true, sender: account.name, text, time: 'now', reactions: [], replyTo: reply?.text }]); setMessage(''); setReply(null); setEditing(null) }
+  const send = async () => {
+    const text = message.trim()
+    if (!text || text.length > 4000) return
+    if (editing) setMessages(old => old.map(item => item.id === editing.id ? { ...item, text, edited: true } : item))
+    else if (selectedChat === 'Mark' && localStorage.getItem(SESSION_KEY)) {
+      try {
+        const response = await fetch(`${API_URL}/chats/nanda-mark/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem(SESSION_KEY)}` }, body: JSON.stringify({ text }) })
+        const remote = await response.json() as { id: string; created_at: string }
+        if (!response.ok) throw new Error('Message not delivered')
+        setMessages(old => old.some(item => item.id === remote.id) ? old : [...old, { id: remote.id, mine: true, sender: account.name, text, time: new Date(remote.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), reactions: [], replyTo: reply?.text }])
+      } catch { setMessages(old => [...old, { id: crypto.randomUUID(), mine: true, sender: account.name, text, time: 'now', reactions: [], replyTo: reply?.text }]) }
+    } else setMessages(old => [...old, { id: crypto.randomUUID(), mine: true, sender: account.name, text, time: 'now', reactions: [], replyTo: reply?.text }])
+    setMessage('')
+    setReply(null)
+    setEditing(null)
+  }
   const attach = (file?: File) => { if (!file) return; setMessages(old => [...old, { id: crypto.randomUUID(), mine: true, sender: account.name, text: `📎 ${file.name} · ${Math.ceil(file.size / 1024)} KB${file.type.startsWith('image/') ? ' · photo as file' : ''}`, time: 'now', reactions: [] }]) }
   const deleteMessage = (id: string) => setMessages(old => old.filter(m => m.id !== id))
   const matches = messages.filter(m => m.text.toLowerCase().includes(search.toLowerCase()))
