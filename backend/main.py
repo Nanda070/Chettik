@@ -142,7 +142,8 @@ CREATE TABLE IF NOT EXISTS group_members (group_id TEXT NOT NULL, user_id TEXT N
 CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', username TEXT UNIQUE, visibility TEXT NOT NULL, owner_id TEXT NOT NULL, chat_id TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS channel_members (channel_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'subscriber', PRIMARY KEY(channel_id,user_id));
 CREATE TABLE IF NOT EXISTS invite_links (id TEXT PRIMARY KEY, target_type TEXT NOT NULL, target_id TEXT NOT NULL, code TEXT UNIQUE NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, bio TEXT NOT NULL DEFAULT '', github TEXT NOT NULL DEFAULT '', discord TEXT NOT NULL DEFAULT '', privacy_json TEXT NOT NULL DEFAULT '{}');
+CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, bio TEXT NOT NULL DEFAULT '', github TEXT NOT NULL DEFAULT '', discord TEXT NOT NULL DEFAULT '', privacy_json TEXT NOT NULL DEFAULT '{}', avatar_media_id TEXT);
+CREATE TABLE IF NOT EXISTS contacts (owner_id TEXT NOT NULL, contact_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(owner_id, contact_id), CHECK(owner_id != contact_id));
 CREATE TABLE IF NOT EXISTS sticker_packs (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, title TEXT NOT NULL, author TEXT NOT NULL, visibility TEXT NOT NULL DEFAULT 'private', share_code TEXT UNIQUE NOT NULL);
 CREATE TABLE IF NOT EXISTS stickers (id TEXT PRIMARY KEY, pack_id TEXT NOT NULL, owner_id TEXT NOT NULL, name TEXT NOT NULL, mime_type TEXT NOT NULL, data_url TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, uploader_id TEXT NOT NULL, name TEXT NOT NULL, mime_type TEXT NOT NULL, byte_size INTEGER NOT NULL, data_url TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -190,6 +191,7 @@ def init(reset: bool = False):
                 DROP TABLE IF EXISTS messages;
                 DROP TABLE IF EXISTS chat_members;
                 DROP TABLE IF EXISTS chats;
+                DROP TABLE IF EXISTS contacts;
                 DROP TABLE IF EXISTS profiles;
                 DROP TABLE IF EXISTS otp_challenges;
                 DROP TABLE IF EXISTS sessions;
@@ -202,6 +204,9 @@ def init(reset: bool = False):
         for definition in ("media_id TEXT", "media_mime TEXT", "media_size INTEGER"):
             if definition.split()[0] not in message_columns:
                 c.execute(f"ALTER TABLE messages ADD COLUMN {definition}")
+        profile_columns = {item[1] for item in c.execute("PRAGMA table_info(profiles)").fetchall()}
+        if "avatar_media_id" not in profile_columns:
+            c.execute("ALTER TABLE profiles ADD COLUMN avatar_media_id TEXT")
         secret_columns = {item[1] for item in c.execute("PRAGMA table_info(secret_messages)").fetchall()}
         if "sender_key_id" not in secret_columns:
             c.execute("ALTER TABLE secret_messages ADD COLUMN sender_key_id TEXT")
@@ -222,17 +227,26 @@ def init(reset: bool = False):
             if cols and cols != expected:
                 c.execute(f"DROP TABLE {table}")
                 c.execute(ddl)
-        seeds = [
-            ("nanda", "Nanda", "@nanda", "SuperAdmin", "test@test.com", "N", "#9e2338"),
-            ("mark", "Mark", "@mark", "Admin", "test2@test.com", "M", "#6e4c97"),
-            ("alisher", "Alisher", "@alisher", "User", "test3@test.com", "A", "#bf8057"),
-        ]
-        for user in seeds:
-            c.execute("INSERT OR IGNORE INTO users VALUES (?,?,?,?,?,?,?, '[]')", user)
-            c.execute("INSERT OR IGNORE INTO profiles(user_id) VALUES (?)", (user[0],))
-            saved = f"saved-{user[0]}"
-            c.execute("INSERT OR IGNORE INTO chats VALUES (?, 'Saved Messages', 'saved')", (saved,))
-            c.execute("INSERT OR IGNORE INTO chat_members VALUES (?,?)", (saved, user[0]))
+        # Remove old showcase accounts. The only provisioned local account is the
+        # requested administrator; it is never automatically added as a contact.
+        c.execute("DELETE FROM contacts WHERE owner_id IN ('mark','alisher') OR contact_id IN ('mark','alisher')")
+        c.execute("DELETE FROM users WHERE id IN ('mark','alisher')")
+        admin = c.execute("SELECT id FROM users WHERE email=?", ("turkapahf@gmail.com",)).fetchone()
+        if admin:
+            c.execute("UPDATE users SET role='SuperAdmin', username=CASE WHEN username='@nanda' OR NOT EXISTS(SELECT 1 FROM users u2 WHERE u2.username='@nanda' AND u2.id!=users.id) THEN '@nanda' ELSE username END WHERE id=?", (admin["id"],))
+            admin_id = admin["id"]
+        else:
+            existing_nanda = c.execute("SELECT id FROM users WHERE username='@nanda'").fetchone()
+            if existing_nanda:
+                c.execute("UPDATE users SET email=?, role='SuperAdmin' WHERE id=?", ("turkapahf@gmail.com", existing_nanda["id"]))
+                admin_id = existing_nanda["id"]
+            else:
+                admin_id = "nanda"
+                c.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?, '[]')", (admin_id, "Nanda", "@nanda", "SuperAdmin", "turkapahf@gmail.com", "N", "#9e2338"))
+        c.execute("INSERT OR IGNORE INTO profiles(user_id) VALUES (?)", (admin_id,))
+        saved = f"saved-{admin_id}"
+        c.execute("INSERT OR IGNORE INTO chats VALUES (?, 'Saved Messages', 'saved')", (saved,))
+        c.execute("INSERT OR IGNORE INTO chat_members VALUES (?,?)", (saved, admin_id))
 
 
 @app.on_event("startup")
@@ -321,8 +335,17 @@ def message_with_state(connection: sqlite3.Connection, message: sqlite3.Row, use
 
 def public(user):
     return {k: user[k] for k in ("id", "name", "username", "role", "email", "initials", "color")} | {
-        "badges": json.loads(user.get("badges_json") or "[]")
+        "badges": json.loads(user.get("badges_json") or "[]"),
+        "avatarUrl": f"/api/media/{user['avatar_media_id']}" if user.get("avatar_media_id") else None,
     }
+
+
+def public_user(connection: sqlite3.Connection, user_id: str):
+    value = connection.execute(
+        "SELECT u.*, p.avatar_media_id FROM users u LEFT JOIN profiles p ON p.user_id=u.id WHERE u.id=?",
+        (user_id,),
+    ).fetchone()
+    return public(row(value)) if value else None
 
 
 async def broadcast(payload: dict, recipients: set[str] | None = None):
@@ -475,7 +498,7 @@ def me_profile(authorization: str | None = Header(None)):
         profile = c.execute("SELECT * FROM profiles WHERE user_id=?", (user["id"],)).fetchone()
     data = row(profile) or {"bio": "", "github": "", "discord": "", "privacy_json": "{}"}
     return {
-        **public(user),
+        **public(row(user) | {"avatar_media_id": data.get("avatar_media_id")}),
         "bio": data.get("bio", ""),
         "github": data.get("github", ""),
         "discord": data.get("discord", ""),
@@ -487,18 +510,85 @@ def me_profile(authorization: str | None = Header(None)):
 def patch_me_profile(body: dict, authorization: str | None = Header(None)):
     user = current(authorization)
     with db() as c:
+        has_avatar_change = "avatarMediaId" in body
+        avatar_media_id = body.get("avatarMediaId")
+        if has_avatar_change and avatar_media_id:
+            if avatar_media_id and not c.execute(
+                "SELECT 1 FROM media_objects WHERE id=? AND uploader_id=? AND mime_type LIKE 'image/%'",
+                (avatar_media_id, user["id"]),
+            ).fetchone():
+                raise HTTPException(400, "Choose an image uploaded by this account")
         c.execute(
-            "UPDATE profiles SET bio=?, github=?, discord=?, privacy_json=? WHERE user_id=?",
-            (body.get("bio", ""), body.get("github", ""), body.get("discord", ""), json.dumps(body.get("privacy") or {}), user["id"]),
+            "UPDATE profiles SET bio=?, github=?, discord=?, privacy_json=?, avatar_media_id=CASE WHEN ? THEN ? ELSE avatar_media_id END WHERE user_id=?",
+            (body.get("bio", ""), body.get("github", ""), body.get("discord", ""), json.dumps(body.get("privacy") or {}), has_avatar_change, avatar_media_id, user["id"]),
         )
     return {"ok": True}
 
 
-@app.get("/api/users")
-def users(authorization: str | None = Header(None)):
+@app.get("/api/users/search")
+def search_users(q: str = "", authorization: str | None = Header(None)):
+    user = current(authorization)
+    query = q.strip().lstrip("@")
+    if not query:
+        return []
+    with db() as c:
+        values = c.execute(
+            """SELECT u.*,p.avatar_media_id FROM users u LEFT JOIN profiles p ON p.user_id=u.id
+               WHERE u.id!=? AND (lower(u.username) LIKE ? OR lower(u.name) LIKE ?)
+               ORDER BY CASE WHEN lower(u.username)=? THEN 0 ELSE 1 END, u.name LIMIT 20""",
+            (user["id"], f"%{query.lower()}%", f"%{query.lower()}%", f"@{query.lower()}"),
+        ).fetchall()
+    return [public(row(value)) for value in values]
+
+
+@app.get("/api/contacts")
+def list_contacts(authorization: str | None = Header(None)):
     user = current(authorization)
     with db() as c:
-        return [public(row(x)) for x in c.execute("SELECT * FROM users WHERE id!=? ORDER BY name", (user["id"],))]
+        values = c.execute(
+            """SELECT u.*,p.avatar_media_id FROM contacts c JOIN users u ON u.id=c.contact_id
+               LEFT JOIN profiles p ON p.user_id=u.id WHERE c.owner_id=? ORDER BY u.name""",
+            (user["id"],),
+        ).fetchall()
+    return [public(row(value)) for value in values]
+
+
+@app.post("/api/contacts")
+def add_contact(body: dict, authorization: str | None = Header(None)):
+    user = current(authorization)
+    target_id = str(body.get("userId", ""))
+    if not target_id or target_id == user["id"]:
+        raise HTTPException(400, "Choose another user")
+    with db() as c:
+        if not c.execute("SELECT 1 FROM users WHERE id=?", (target_id,)).fetchone():
+            raise HTTPException(404, "User not found")
+        c.execute("INSERT OR IGNORE INTO contacts VALUES (?,?,?)", (user["id"], target_id, now()))
+        contact = public_user(c, target_id)
+        audit(c, user["id"], "contact.added", "user", target_id)
+    return contact
+
+
+@app.delete("/api/contacts/{user_id}")
+def remove_contact(user_id: str, authorization: str | None = Header(None)):
+    user = current(authorization)
+    with db() as c:
+        c.execute("DELETE FROM contacts WHERE owner_id=? AND contact_id=?", (user["id"], user_id))
+        audit(c, user["id"], "contact.removed", "user", user_id)
+    return {"ok": True}
+
+
+@app.get("/api/users/{username}/profile")
+def user_profile(username: str, authorization: str | None = Header(None)):
+    current(authorization)
+    with db() as c:
+        value = c.execute(
+            "SELECT u.*,p.bio,p.avatar_media_id FROM users u LEFT JOIN profiles p ON p.user_id=u.id WHERE u.username=?",
+            (f"@{username.lstrip('@').lower()}",),
+        ).fetchone()
+    if not value:
+        raise HTTPException(404, "User not found")
+    data = row(value)
+    return public(data) | {"bio": data.get("bio", "")}
 
 
 @app.get("/api/chats")
@@ -509,15 +599,16 @@ def chats(authorization: str | None = Header(None)):
             """
             SELECT c.*,
               COALESCE(CASE WHEN c.type='direct' THEN (SELECT u.name FROM users u JOIN chat_members cm2 ON cm2.user_id=u.id WHERE cm2.chat_id=c.id AND u.id!=? LIMIT 1) ELSE c.title END, c.title) AS title,
+              CASE WHEN c.type='direct' THEN (SELECT p.avatar_media_id FROM users u JOIN chat_members cm2 ON cm2.user_id=u.id LEFT JOIN profiles p ON p.user_id=u.id WHERE cm2.chat_id=c.id AND u.id!=? LIMIT 1) END AS avatar_media_id,
               COALESCE((SELECT m.text FROM messages m WHERE m.chat_id=c.id ORDER BY m.created_at DESC LIMIT 1),'') preview,
               (SELECT m.created_at FROM messages m WHERE m.chat_id=c.id ORDER BY m.created_at DESC LIMIT 1) last_message_at
             FROM chats c JOIN chat_members cm ON cm.chat_id=c.id
             WHERE cm.user_id=?
             ORDER BY COALESCE(last_message_at,'') DESC, c.title
             """,
-            (user["id"], user["id"]),
+            (user["id"], user["id"], user["id"]),
         ).fetchall()
-    return [row(x) for x in values]
+    return [row(x) | {"avatarUrl": f"/api/media/{x['avatar_media_id']}" if x["avatar_media_id"] else None} for x in values]
 
 
 @app.post("/api/chats/direct")
@@ -532,7 +623,8 @@ def direct(body: dict, authorization: str | None = Header(None)):
         c.execute("INSERT OR IGNORE INTO chats VALUES (?,?,'direct')", (chat, other["name"]))
         for member in (user["id"], target):
             c.execute("INSERT OR IGNORE INTO chat_members VALUES (?,?)", (chat, member))
-    return {"id": chat, "title": other["name"], "type": "direct", "participant": public(row(other)), "preview": "", "last_message_at": None}
+        participant = public_user(c, target)
+    return {"id": chat, "title": other["name"], "type": "direct", "participant": participant, "preview": "", "last_message_at": None}
 
 
 @app.get("/api/chats/{chat_id}/messages")
@@ -834,7 +926,8 @@ def download_media(media_id: str, authorization: str | None = Header(None)):
             "SELECT 1 FROM messages m JOIN chat_members cm ON cm.chat_id=m.chat_id WHERE m.media_id=? AND cm.user_id=? LIMIT 1",
             (media_id, user["id"]),
         ).fetchone()
-    if not media or not allowed:
+        avatar = c.execute("SELECT 1 FROM profiles WHERE avatar_media_id=?", (media_id,)).fetchone()
+    if not media or not (allowed or avatar):
         raise HTTPException(404, "Media is unavailable")
     headers = {
         "Content-Disposition": f'inline; filename="{media["name"].replace(chr(34), "")}"',

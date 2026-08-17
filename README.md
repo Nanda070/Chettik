@@ -23,7 +23,7 @@ npm run dev
 The API is FastAPI (`backend/main.py`) with SQLite. The former Express implementation
 in `server/index.ts` is retained only as a historical reference and is no longer run.
 
-The database is `chettik.db`. Startup removes legacy showcase conversations and preserves only the three email-login accounts plus each account's empty Saved Messages chat.
+The database is `chettik.db`. Startup removes the legacy showcase users and conversations. It provisions only `turkapahf@gmail.com` as the `@nanda` local administrator, with an empty Saved Messages chat; it is never added to anybody's contacts automatically.
 
 ## Sign in and SMTP
 
@@ -32,12 +32,19 @@ stores only its scrypt hash, and sends the code with SMTP. Delivery errors are l
 and fail the request; they never silently accept a code.
 
 For isolated CI/local tests only, explicitly set `OTP_DEV_CODE=123456`; it bypasses
-SMTP and is never a production fallback. The seeded addresses are `test@test.com`,
-`test2@test.com`, and `test3@test.com`.
+SMTP and is never a production fallback.
 
 After signing in, use **New chat**, **New group**, or **New channel**. Direct chats, groups, channels, and messages are stored in SQLite.
 
 The browser email screen also supports **Create account**: enter a new email, receive an OTP, then choose a display name and unique username. SMTP is used whenever it is configured; `OTP_DEV_CODE` is only for isolated local/CI testing.
+
+## Roles
+
+Every new account has the `User` role. `Admin` and `SuperAdmin` can access the local
+moderation audit endpoint; `SuperAdmin` is the highest current role. On each local
+startup, `turkapahf@gmail.com` is ensured to be `SuperAdmin` (and uses `@nanda`
+when that username is available). Roles are server-side values and must not be
+trusted from the browser.
 
 ## Secret chats
 

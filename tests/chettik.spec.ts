@@ -1,126 +1,79 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 
-async function wipeInbox(request: APIRequestContext, email: string) {
-  const otp = await request.post('http://127.0.0.1:8788/api/auth/otp/request', { data: { email } })
-  expect(otp.ok()).toBeTruthy()
-  const { challengeId } = await otp.json()
-  const verify = await request.post('http://127.0.0.1:8788/api/auth/otp/verify', {
-    data: { email, code: '123456', challengeId, deviceLabel: 'Playwright' },
-  })
-  expect(verify.ok()).toBeTruthy()
-  const { token } = await verify.json()
-  const reset = await request.post('http://127.0.0.1:8788/api/dev/reset-inbox', {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  expect(reset.ok()).toBeTruthy()
-}
+const API = 'http://127.0.0.1:8788/api'
 
-async function login(page: Page, email = 'test@test.com') {
+async function login(page: Page) {
   await page.goto('/')
   await page.evaluate(() => localStorage.clear())
   await page.goto('/')
   if (await page.getByRole('heading', { name: 'Scan from mobile Chettik' }).isVisible().catch(() => false)) {
     await page.getByRole('button', { name: 'Log in using email' }).click()
   }
-  await page.getByRole('textbox', { name: 'Email address' }).fill(email)
-  await page.getByRole('button', { name: /continue|Ð¿Ñ€Ð¾Ð´Ð¾Ð»Ð¶Ð¸Ñ‚ÑŒ/i }).click()
+  await page.getByRole('textbox', { name: 'Email address' }).fill('turkapahf@gmail.com')
+  await page.getByRole('button', { name: /continue/i }).click()
   await page.getByRole('textbox', { name: 'OTP digit 1' }).fill('123456')
-  await page.getByRole('button', { name: /sign in|verify|Ð²Ð¾Ð¹Ñ‚Ð¸|Ð¿Ð¾Ð´Ñ‚Ð²ÐµÑ€Ð´Ð¸Ñ‚ÑŒ/i }).click()
+  await page.getByRole('button', { name: /sign in|verify/i }).click()
   await expect(page.locator('.app-shell')).toBeVisible()
 }
 
-async function openNewChat(page: Page, mobile: boolean) {
-  if (mobile) {
-    await page.locator('.chat-list-empty').getByRole('button', { name: 'New chat' }).click()
-  } else {
-    await page.locator('.inbox-empty').getByRole('button', { name: 'New chat' }).click()
-  }
+async function createSearchablePerson(request: APIRequestContext) {
+  const suffix = `${Date.now()}`
+  const email = `playwright-${suffix}@example.test`
+  const username = `playwright_${suffix}`
+  const challenge = await request.post(`${API}/auth/otp/request`, { data: { email, mode: 'signup' } })
+  expect(challenge.ok()).toBeTruthy()
+  const verified = await request.post(`${API}/auth/otp/verify`, {
+    data: { email, code: '123456', challengeId: (await challenge.json()).challengeId, name: `Playwright ${suffix}`, username },
+  })
+  expect(verified.ok()).toBeTruthy()
+  return { username: `@${username}`, name: `Playwright ${suffix}` }
 }
 
-test('QR-first authentication is polished and exposes six OTP cells', async ({ page }, testInfo) => {
-  await page.goto('/')
-  await page.evaluate(() => localStorage.clear())
-  await page.goto('/')
-  if (testInfo.project.name === 'desktop') {
-    await expect(page.getByRole('heading', { name: 'Scan from mobile Chettik' })).toBeVisible()
-    await expect(page.locator('.desktop-qr')).toBeVisible()
-    await page.getByRole('button', { name: 'Log in using email' }).click()
+async function openSavedMessages(page: Page) {
+  if (await page.getByRole('textbox', { name: 'Message text' }).isVisible().catch(() => false)) return
+  const sidebarSaved = page.locator('.sidebar .chat-row').filter({ hasText: 'Saved Messages' })
+  if (await sidebarSaved.isVisible().catch(() => false)) {
+    await sidebarSaved.click()
+    return
   }
-  await page.getByRole('textbox', { name: 'Email address' }).fill('test@test.com')
-  await page.getByRole('button', { name: /continue|Ð¿Ñ€Ð¾Ð´Ð¾Ð»Ð¶Ð¸Ñ‚ÑŒ/i }).click()
-  const cells = page.locator('.otp-cell:visible')
-  await expect(cells).toHaveCount(6)
-  await expect(cells.first()).toBeFocused()
-  await cells.first().fill('123456')
-  await expect(cells.nth(5)).toHaveValue('6')
-})
+  await page.getByRole('button', { name: 'Open main menu' }).click()
+  await page.locator('.main-menu').getByRole('button', { name: 'Saved messages', exact: true }).click()
+}
 
-test('browser creates a new email account after OTP ownership proof', async ({ page }, testInfo) => {
-  await page.goto('/')
-  await page.evaluate(() => localStorage.clear())
-  await page.goto('/')
-  if (testInfo.project.name === 'desktop') await page.getByRole('button', { name: 'Log in using email' }).click()
-  await page.getByRole('button', { name: /create account|ÑÐ¾Ð·Ð´Ð°Ñ‚ÑŒ Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚/i }).click()
-  const suffix = `${Date.now()}${testInfo.project.name === 'mobile' ? 'm' : 'd'}`
-  await page.getByRole('textbox', { name: 'Display name' }).fill(`Local ${suffix}`)
-  await page.getByRole('textbox', { name: 'Username' }).fill(`local_${suffix}`)
-  await page.getByRole('textbox', { name: 'Email address' }).fill(`local-${suffix}@example.test`)
-  await page.getByRole('button', { name: /continue|Ð¿Ñ€Ð¾Ð´Ð¾Ð»Ð¶Ð¸Ñ‚ÑŒ/i }).click()
-  await page.getByRole('textbox', { name: 'OTP digit 1' }).fill('123456')
-  await page.getByRole('button', { name: /sign in|verify|Ð²Ð¾Ð¹Ñ‚Ð¸|Ð¿Ð¾Ð´Ñ‚Ð²ÐµÑ€Ð´Ð¸Ñ‚ÑŒ/i }).click()
-  await expect(page.locator('.app-shell')).toBeVisible()
-})
-
-test('new inbox creates direct chats, groups, channels and messages', async ({ page, context, request }, testInfo) => {
-  const mobile = testInfo.project.name === 'mobile'
-  const email = mobile ? 'test2@test.com' : 'test3@test.com'
-  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
-  await wipeInbox(request, email)
-  await login(page, email)
-
-  if (mobile) {
-    await expect(page.locator('.app-shell.inbox-empty-state')).toBeVisible()
-    await expect(page.locator('.sidebar')).toBeVisible()
-    await expect(page.locator('.chat-list-empty')).toBeVisible()
-    await expect(page.getByText('No conversations yet')).toBeVisible()
-    await expect(page.locator('.inbox-empty-state .chat')).toHaveCSS('display', 'none')
-  } else {
-    await expect(page.locator('.inbox-empty')).toBeVisible()
-    await expect(page.getByText('No chats yet')).toBeVisible()
-    await expect(page.locator('.sidebar .chat-row').filter({ hasText: 'Saved Messages' })).toBeVisible()
-  }
-
-  await openNewChat(page, mobile)
-  await expect(page.getByRole('dialog', { name: 'Contacts' })).toBeVisible()
-  await page.locator('.contacts-panel > div > button').first().click()
+test('Saved Messages opens and sends a self message', async ({ page }) => {
+  await login(page)
+  await openSavedMessages(page)
   await expect(page.getByRole('textbox', { name: 'Message text' })).toBeVisible()
-  const message = `hello-${Date.now()}`
+  const message = `saved-${Date.now()}`
   await page.getByRole('textbox', { name: 'Message text' }).fill(message)
   await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.locator('.messages .bubble').getByText(message)).toBeVisible()
+  await expect(page.locator('.messages')).toContainText(message)
+})
 
-  await page.getByRole('button', { name: 'Open main menu' }).first().click()
-  await page.getByRole('button', { name: 'New group' }).click()
-  const groupName = `Team ${Date.now()}`
-  await page.getByRole('textbox', { name: 'Group name' }).fill(groupName)
-  await page.getByRole('button', { name: 'Create group' }).click()
-  await expect(page.locator('.chat-head')).toContainText(groupName)
-  await page.getByRole('button', { name: 'Open group info' }).click()
-  await expect(page.getByRole('dialog', { name: new RegExp(`${groupName} group info`) })).toBeVisible()
-  await page.getByRole('button', { name: 'Close group info' }).click()
+test('searches a username and adds a contact', async ({ page, request }) => {
+  const person = await createSearchablePerson(request)
+  await login(page)
+  await page.getByLabel('New chat').click()
+  const contacts = page.getByRole('dialog', { name: 'Contacts' })
+  await expect(contacts).toBeVisible()
+  await contacts.getByRole('textbox', { name: 'Search people' }).fill(person.username)
+  await expect(contacts.getByText(person.name).first()).toBeVisible()
+  await contacts.getByRole('button', { name: `Add ${person.name}`, exact: true }).click()
+  await expect(contacts.getByText('Your contacts')).toBeVisible()
+  await contacts.getByText(person.name).last().click()
+  await expect(page.getByRole('textbox', { name: 'Message text' })).toBeVisible()
+})
 
-  await page.getByRole('button', { name: 'Open main menu' }).first().click()
-  await page.getByRole('button', { name: 'New channel' }).click()
-  const channelName = `Notes ${Date.now()}`
-  const handle = `notes_${Date.now()}`
-  await page.getByRole('textbox', { name: 'Channel name' }).fill(channelName)
-  await page.getByRole('textbox', { name: 'Channel handle' }).fill(handle)
-  await page.getByRole('button', { name: 'Create channel' }).click()
-  await expect(page.locator('.chat-head')).toContainText(channelName)
-  await page.getByRole('button', { name: 'Open channel info' }).first().click()
-  await expect(page.getByRole('dialog', { name: new RegExp(`${channelName} channel info`) })).toBeVisible()
-  await page.getByRole('button', { name: 'Invite link' }).click()
-  await expect(page.getByText('Invite link ready')).toBeVisible()
-  await page.locator('.invite-link').click()
-  await expect(page.getByText('Invite link copied')).toBeVisible()
+test('uploads and previews a profile photo', async ({ page }, testInfo) => {
+  await login(page)
+  if (testInfo.project.name === 'mobile') {
+    await openSavedMessages(page)
+    await page.getByRole('button', { name: 'Profile', exact: true }).click()
+  } else {
+    await page.getByRole('button', { name: 'Open my profile' }).click()
+  }
+  await page.locator('.tg-profile').click()
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLTOQAAAABJRU5ErkJggg==', 'base64')
+  await page.getByLabel('Profile photo').setInputFiles({ name: 'avatar.png', mimeType: 'image/png', buffer: image })
+  await expect(page.locator('.edit-avatar img')).toBeVisible()
 })

@@ -11,10 +11,20 @@ from backend.main import app, init
 
 
 def login(client: TestClient, email: str) -> str:
-    challenge = client.post("/api/auth/otp/request", json={"email": email}).json()["challengeId"]
-    response = client.post("/api/auth/otp/verify", json={"email": email, "code": "123456", "challengeId": challenge})
+    request = client.post("/api/auth/otp/request", json={"email": email})
+    if request.status_code == 404:
+        username = email.split("@")[0].replace(".", "_").replace("-", "_")
+        request = client.post("/api/auth/otp/request", json={"email": email, "mode": "signup"})
+        assert request.status_code == 200
+        response = client.post("/api/auth/otp/verify", json={"email": email, "code": "123456", "challengeId": request.json()["challengeId"], "name": username.title(), "username": username})
+    else:
+        response = client.post("/api/auth/otp/verify", json={"email": email, "code": "123456", "challengeId": request.json()["challengeId"]})
     assert response.status_code == 200
     return response.json()["token"]
+
+
+def account_id(client: TestClient, token: str) -> str:
+    return client.get("/api/me/profile", headers={"Authorization": f"Bearer {token}"}).json()["id"]
 
 
 def setup_function():
@@ -27,7 +37,7 @@ def test_headers_and_message_membership():
         token_b = login(client, "test2@test.com")
         headers_a = {"Authorization": f"Bearer {token_a}"}
         headers_b = {"Authorization": f"Bearer {token_b}"}
-        created = client.post("/api/chats/direct", headers=headers_a, json={"userId": "mark"})
+        created = client.post("/api/chats/direct", headers=headers_a, json={"userId": account_id(client, token_b)})
         assert created.status_code == 200
         chat_id = created.json()["id"]
         sent = client.post(f"/api/chats/{chat_id}/messages", headers=headers_a, json={"text": "private"})
@@ -52,7 +62,8 @@ def test_edit_reactions_audit_and_websocket_auth():
         page = client.get(f"/api/chats/{chat_id}/messages", headers=headers).json()
         assert page["items"][0]["text"] == "edited"
         assert page["items"][0]["reactions"][0]["emoji"] == "✅"
-        assert client.get("/api/admin/audit", headers=headers).status_code == 200
+        admin = login(client, "turkapahf@gmail.com")
+        assert client.get("/api/admin/audit", headers={"Authorization": f"Bearer {admin}"}).status_code == 200
         with client.websocket_connect(f"/api/ws?token={token}") as socket:
             socket.send_text("ping")
         try:
@@ -74,3 +85,19 @@ def test_signup_creates_unique_account_and_session():
         assert response.json()["user"]["username"] == "@new_local"
         duplicate = client.post("/api/auth/otp/request", json={"email": email, "mode": "signup"})
         assert duplicate.status_code == 409
+
+
+def test_contacts_are_opt_in_and_users_are_searchable():
+    with TestClient(app) as client:
+        owner = login(client, "owner@example.test")
+        person = login(client, "person@example.test")
+        owner_headers = {"Authorization": f"Bearer {owner}"}
+        person_id = account_id(client, person)
+        assert client.get("/api/contacts", headers=owner_headers).json() == []
+        search = client.get("/api/users/search?q=@person", headers=owner_headers)
+        assert search.status_code == 200
+        assert search.json()[0]["id"] == person_id
+        added = client.post("/api/contacts", headers=owner_headers, json={"userId": person_id})
+        assert added.status_code == 200
+        assert [item["id"] for item in client.get("/api/contacts", headers=owner_headers).json()] == [person_id]
+        assert client.delete(f"/api/contacts/{person_id}", headers=owner_headers).status_code == 200
