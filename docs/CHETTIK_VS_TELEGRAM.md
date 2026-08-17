@@ -4,10 +4,10 @@ This is an honest implementation checkpoint, not a claim of feature parity or pr
 
 | Feature area | Telegram | Chettik now | How Telegram does it | How Chettik does it | Gap |
 |---|---|---|---|---|---|
-| Auth | Phone OTP, QR and passkeys | Development OTP and desktop QR shell | Global multi-device identity service | SQLite OTP challenges, expiry, throttling and revocable sessions | Production SMS/Telegram provider, passkeys and real QR linking remain |
-| Chats / Saved | Direct, group, channel and Saved Messages | Direct, group and Saved Messages | Server-side synced conversations | SQLite chat/member rows | No channels, folders or robust membership administration |
-| Groups | Roles, invites, topics, permissions | Group info/edit panel, owner badge and primary chat binding | Rich server-authorized group model | SQLite groups and group members | Several management rows are UI stubs; no invites/topics workflows |
-| Messages | Sync, edit/delete, reply, forward, pins, reactions | Send, edit/delete, reply, forward, pins and reactions | Globally distributed message service | Express, SQLite and WebSocket events | Reaction/reply/pin state is still client-side |
+| Auth | Phone OTP, QR and passkeys | Email OTP and email-session QR shell | Global multi-device identity service | SQLite email OTP challenges, expiry, throttling and revocable sessions | Transactional email delivery, passkeys and real QR pairing remain |
+| Chats / Saved | Direct, group, channel and Saved Messages | Direct, group, channel and Saved Messages | Server-side synced conversations | SQLite chat/member rows | Folders and robust membership administration remain |
+| Groups | Roles, invites, topics, permissions | Group info/edit panel, owner/admin invite endpoint and primary chat binding | Rich server-authorized group model | SQLite groups and group members | Invite links and topics remain |
+| Messages | Sync, edit/delete, reply, forward, pins, reactions | Send, edit/delete, reply, forward, pins and reactions | Globally distributed message service | Express, SQLite and WebSocket events | Reactions and pins persist; reply/forward state and receiver synchronization remain |
 | Media / files | CDN, transcoding, previews and access rules | Uploads persisted in SQLite, authenticated download endpoint, timed-media UI | Object storage and media pipelines | Size-limited data-URL attachment records linked through message metadata | 5 MB local implementation; no object storage, scanning, thumbnails or retention |
 | Voice / circles | Recorded media with streaming and playback | Composer UI placeholders | Native media encoding/playback | Message-kind UI | No real audio/video capture or playback |
 | View-once / timed | Receiver-enforced cloud/secret timers | View-once, 3/10/30s metadata and local expiry UI | Protocol/client enforcement plus server metadata | Cloud metadata, local receiver UI state | No cross-device view synchronization or hardened expiry |
@@ -17,16 +17,16 @@ This is an honest implementation checkpoint, not a claim of feature parity or pr
 | Devices | Session list, QR devices, terminate sessions | Current device list and terminate-other-sessions | Cross-device authorization service | Revocable SQLite sessions, dedupe by device identity | No real QR pairing or passkey management |
 | Profiles / badges | Usernames, identity and Premium badges | Profiles, social links and persisted demo badge catalog | Account profile service | SQLite users/profiles/badges JSON | Badge issuance is seed/demo only |
 | Settings / themes / i18n | Mature desktop/mobile settings | Neutral dark/light design system and EN/RU | Native clients | React CSS tokens and localization branches | Strings and accessibility coverage are incomplete |
-| Search / folders | Global search, folders, filters | In-chat local text filtering | Indexed message search | Client-side filter | No indexed/server search or folders |
-| Channels / bots / calls | Channels, bot platform, calls | Not implemented | Telegram platform services | Intentionally out of scope | Major product-scope gap |
+| Search / folders | Global search, folders, filters | In-chat filtering plus API message search | Indexed message search | SQLite membership-scoped `LIKE` search | No ranked/indexed search or folders |
+| Channels / bots / calls | Channels, bot platform, calls | Public/private broadcast channels with subscribers and admin-only posts | Telegram platform services | SQLite channels, channel members and channel chats | Channel UI, invite links, comments, bots and calls remain |
 | Stories | Synced stories | Local UI demonstration | Server media pipeline | UI only | Not persisted or delivered |
 | Sync / storage | Cloud sync with secret-chat exception | SQLite cloud messages; local secret route | Multi-region cloud | Local Express/SQLite service | No production hosting, backups, migration tooling or scale |
 | Desktop / mobile | Native and web clients | Responsive React desktop/mobile shells | Platform-specific clients | One responsive web client | No native apps or offline synchronization |
 
 ## Security and production readiness
 
-Chettik has development-grade OTP/session controls and authenticated attachment access checks. It still needs deployed-origin CSRF/CORS policy, audit logs, backups, malware scanning, secure object storage, authorization integration tests, encrypted secret-chat storage, key management, and an external security review before public use.
+Chettik has development-grade email OTP/session controls and authenticated attachment access checks. It still needs deployed-origin CSRF/CORS policy, audit logs, backups, malware scanning, secure object storage, authorization integration tests, encrypted secret-chat storage, key management, and an external security review before public use.
 
 ## Product conclusion
 
-Chettik is a focused messenger prototype with a usable local API and a restrained desktop-oriented interface. Telegram remains substantially broader and more mature in messaging scale, safety operations, content delivery, E2E secret-chat cryptography, search, channels, bots, calls, and multi-device reliability.
+Chettik is a focused messenger with a usable local API and a restrained desktop-oriented interface. Telegram remains substantially broader and more mature in messaging scale, safety operations, content delivery, E2E secret-chat cryptography, search quality, bots, calls, and multi-device reliability.

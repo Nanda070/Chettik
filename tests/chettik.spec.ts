@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 async function login(page: import('@playwright/test').Page, name: 'Nanda' | 'Mark' | 'Alisher' = 'Nanda') {
   await page.goto('/')
   if (await page.getByRole('heading', { name: 'Scan From Mobile Chettik' }).isVisible()) {
-    await page.getByRole('button', { name: 'Log in using phone number' }).click()
+    await page.getByRole('button', { name: 'Log in using email' }).click()
     await page.getByRole('button', { name, exact: true }).click()
     await page.getByRole('textbox', { name: 'Desktop OTP' }).fill('123456')
     await page.getByRole('button', { name: 'Sign in' }).click()
@@ -152,7 +152,7 @@ test('telegram main menu routes supported Stage 4 entries', async ({ page }, tes
   test.skip(testInfo.project.name !== 'desktop', 'Desktop menu only')
   await login(page)
   await page.getByRole('button', { name: 'Open main menu' }).click()
-  await expect(page.getByText('Chettik Web · v0.5')).toBeVisible()
+  await expect(page.getByText('Chettik Web', { exact: true })).toBeVisible()
   await expect(page.getByText('Wallet', { exact: true })).toHaveCount(0)
   await page.getByText('New Group', { exact: true }).click()
   await expect(page.getByRole('heading', { name: 'New Group' })).toBeVisible()
@@ -178,15 +178,15 @@ test('my profile and saved messages target the signed-in account', async ({ page
   await expect(page.locator('.messages .message')).toContainText('Remember to write this down.')
 })
 
-test('phone privacy Nobody removes the Mobile row for viewers', async ({ page }, testInfo) => {
+test('email-only profiles do not expose a mobile row', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop profile treatment')
   await page.goto('/')
   await page.evaluate(async () => {
-    const challenge = await fetch('http://127.0.0.1:8787/api/auth/otp/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '+22222222222' }) })
+    const challenge = await fetch('http://127.0.0.1:8787/api/auth/otp/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'test2@test.com' }) })
     const { challengeId } = await challenge.json()
-    const auth = await fetch('http://127.0.0.1:8787/api/auth/otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '+22222222222', code: '123456', challengeId }) })
+    const auth = await fetch('http://127.0.0.1:8787/api/auth/otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'test2@test.com', code: '123456', challengeId }) })
     const { token } = await auth.json()
-    await fetch('http://127.0.0.1:8787/api/me/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ privacy: { phone: 'Nobody' } }) })
+    await fetch('http://127.0.0.1:8787/api/me/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ privacy: { lastSeen: 'Nobody' } }) })
   })
   await login(page, 'Nanda')
   await page.getByRole('button', { name: 'Open Mark profile' }).first().click()

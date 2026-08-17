@@ -1,23 +1,23 @@
 # Next development plan
 
-This checkpoint delivers a usable local SQLite messenger with API-backed profiles, privacy, devices, chats, messages, and WebSocket updates. The following work remains before production use.
+This checkpoint delivers an email-first SQLite messenger with API-backed profiles, devices, chats, channels, messages, and WebSocket updates. The following work remains before production use.
 
 ## Reliability and security
 
-1. ✅ Replace the local OTP stub with a provider-backed verification flow, rate limits, expiry, and session revocation. (Development provider boundary is implemented; configure a production SMS/Telegram provider before deployment.)
+1. ✅ Use email OTP with provider boundary, rate limits, expiry, and session revocation. The local provider logs the configured fixed development code server-side; deploy a transactional email provider before public launch.
 2. Add password hashing, CSRF/CORS policy for deployed origins, audit logs, migrations, backups, and encrypted-at-rest secrets.
 3. Add authorization tests for every resource, especially direct-chat membership, blocks, reports, and device termination.
 
 ## Messaging
 
-1. Persist reactions, replies, forwards, pins, chat read state, mute/archive state, and attachments instead of their current UI-only behavior. Attachment records and their message metadata are now persisted with authenticated download checks; reactions, reply/forward/pin state and receiver delivery/view synchronization remain.
+1. Persist reactions, replies, forwards, pins, chat read state, mute/archive state, and attachments instead of their current UI-only behavior. Reactions and message pins now have SQLite/API persistence; replies, forwards, receipts, and chat state still need canonical server records.
 2. Add pagination/cursor loading and virtualized rendering for large conversation histories.
 3. Add message search, delivery/read receipts, typing indicators, presence, and message edit/delete history.
 4. ✅ Store uploaded media behind authenticated local download URLs. Add object storage, virus scanning, retention rules, thumbnails, and a production upload pipeline.
 
 ## Product and privacy
 
-1. Persist contacts, groups/channels, stories, notification preferences, report review workflows, and account deletion.
+1. Persist contacts, stories, notification preferences, report review workflows, and account deletion. Broadcast channels now persist public/private metadata, subscribers, administrators, and administrator-only posts; comments and invite links remain.
 2. Secret-chat entry and timed-media UX are implemented as device-local MVPs: secret messages do not use the cloud API, and cloud-media expiry metadata is stored. Replace browser-local secret storage with audited encrypted IndexedDB and add device-key handshake before production.
 3. Profile badge assignments are now persisted with user records. The current Staff, Early Supporter, System, Official, OP, and Chettik-house catalog is seed/demo data; add administration and authorization workflows before public issuance.
 4. Global settings no longer surface message-delivery controls; secret chats and expiring media belong in their per-chat composer and user-action flows.
