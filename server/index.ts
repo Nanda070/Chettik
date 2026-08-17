@@ -19,6 +19,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS privacy_settings (user_id TEXT PRIMARY KEY, phone TEXT NOT NULL DEFAULT 'Contacts', last_seen TEXT NOT NULL DEFAULT 'Contacts');
   CREATE TABLE IF NOT EXISTS blocked_users (user_id TEXT NOT NULL, blocked_user_id TEXT NOT NULL, PRIMARY KEY (user_id, blocked_user_id));
   CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, reporter_id TEXT NOT NULL, message_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', owner_id TEXT NOT NULL, primary_chat_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS group_members (group_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member', PRIMARY KEY (group_id, user_id));
 `)
 function addColumn(table: string, definition: string) {
   const column = definition.split(' ')[0]
@@ -56,6 +58,8 @@ const joinEverySeedChat = db.prepare('INSERT OR IGNORE INTO chat_members (chat_i
 for (const chatId of ['nanda-mark', 'design-circle', 'nanda-alisher', 'saved-nanda', 'saved-mark', 'saved-alisher']) {
   for (const [userId] of users) joinEverySeedChat.run(chatId, userId)
 }
+db.prepare("INSERT OR IGNORE INTO groups (id, title, description, owner_id, primary_chat_id) VALUES ('design-circle', 'Design circle', 'A calm place for thoughtful product reviews.', 'nanda', 'design-circle')").run()
+for (const [id] of users) db.prepare("INSERT OR IGNORE INTO group_members (group_id, user_id, role) VALUES ('design-circle', ?, ?)").run(id, id === 'nanda' ? 'owner' : 'member')
 const seedMessage = db.prepare('INSERT OR IGNORE INTO messages (id, chat_id, sender_id, text, kind) VALUES (?, ?, ?, ?, ?)')
 seedMessage.run('seed-mark-1', 'nanda-mark', 'mark', 'I tried the new onboarding flow. It feels really calm.', 'text')
 seedMessage.run('seed-nanda-1', 'nanda-mark', 'nanda', 'That was the idea. Less noise, more space for people.', 'text')
@@ -170,6 +174,50 @@ app.get('/api/chats', (request, response) => {
     ORDER BY COALESCE(last_message_at, '') DESC, c.title
   `).all(user.id, user.id)
   response.json(chats)
+})
+app.get('/api/groups', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  response.json(db.prepare(`
+    SELECT g.*, COUNT(gm.user_id) AS member_count
+    FROM groups g JOIN group_members gm ON gm.group_id = g.id
+    WHERE EXISTS (SELECT 1 FROM group_members own WHERE own.group_id = g.id AND own.user_id = ?)
+    GROUP BY g.id ORDER BY g.created_at DESC
+  `).all(user.id))
+})
+app.post('/api/groups', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const { title, description = '', createChat = true } = request.body as { title?: string; description?: string; createChat?: boolean }
+  if (!title?.trim() || title.length > 120 || description.length > 1000) return response.status(400).json({ error: 'Provide a title up to 120 characters and description up to 1000 characters' })
+  const groupId = randomUUID()
+  const chatId = createChat ? randomUUID() : null
+  const create = db.transaction(() => {
+    if (chatId) {
+      db.prepare("INSERT INTO chats (id, title, type) VALUES (?, ?, 'group')").run(chatId, title.trim())
+      db.prepare('INSERT INTO chat_members (chat_id, user_id) VALUES (?, ?)').run(chatId, user.id)
+    }
+    db.prepare('INSERT INTO groups (id, title, description, owner_id, primary_chat_id) VALUES (?, ?, ?, ?, ?)').run(groupId, title.trim(), description, user.id, chatId)
+    db.prepare("INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, 'owner')").run(groupId, user.id)
+  })
+  create()
+  response.status(201).json({ id: groupId, title: title.trim(), description, primaryChatId: chatId })
+})
+app.patch('/api/groups/:groupId', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const group = db.prepare('SELECT * FROM groups WHERE id = ? AND owner_id = ?').get(request.params.groupId, user.id) as { id: string } | undefined
+  if (!group) return response.status(403).json({ error: 'Only the group owner can edit this group' })
+  const { title, description } = request.body as { title?: string; description?: string }
+  if (!title?.trim() || title.length > 120 || (description || '').length > 1000) return response.status(400).json({ error: 'Provide a title up to 120 characters and description up to 1000 characters' })
+  db.prepare('UPDATE groups SET title = ?, description = ? WHERE id = ?').run(title.trim(), description || '', group.id)
+  response.json(db.prepare('SELECT * FROM groups WHERE id = ?').get(group.id))
+})
+app.post('/api/groups/:groupId/link-chat', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const { chatId } = request.body as { chatId?: string }
+  const owns = db.prepare('SELECT 1 FROM groups WHERE id = ? AND owner_id = ?').get(request.params.groupId, user.id)
+  const member = db.prepare('SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?').get(chatId, user.id)
+  if (!owns || !member || !chatId) return response.status(403).json({ error: 'You can only link a chat you belong to' })
+  db.prepare('UPDATE groups SET primary_chat_id = ? WHERE id = ?').run(chatId, request.params.groupId)
+  response.json({ ok: true, primaryChatId: chatId })
 })
 app.get('/api/me/profile', (request, response) => {
   const user = requireSession(request, response); if (!user) return
