@@ -24,6 +24,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS sticker_packs (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, title TEXT NOT NULL, author TEXT NOT NULL, visibility TEXT NOT NULL DEFAULT 'private', share_code TEXT NOT NULL UNIQUE, cover_sticker_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS stickers (id TEXT PRIMARY KEY, pack_id TEXT NOT NULL, owner_id TEXT NOT NULL, name TEXT NOT NULL, mime_type TEXT NOT NULL, data_url TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS installed_sticker_packs (user_id TEXT NOT NULL, pack_id TEXT NOT NULL, PRIMARY KEY (user_id, pack_id));
+  CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, uploader_id TEXT NOT NULL, name TEXT NOT NULL, mime_type TEXT NOT NULL, byte_size INTEGER NOT NULL, data_url TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 `)
 function addColumn(table: string, definition: string) {
   const column = definition.split(' ')[0]
@@ -111,7 +112,7 @@ function clientIp(request: express.Request) {
   return request.ip || request.socket.remoteAddress || 'unknown'
 }
 const app = express()
-app.use(express.json())
+app.use(express.json({ limit: '7mb' }))
 app.use((_, response, next) => { response.setHeader('Access-Control-Allow-Origin', 'http://127.0.0.1:5173'); response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS'); next() })
 app.options('/api/{*path}', (_, response) => response.sendStatus(204))
 
@@ -332,6 +333,24 @@ app.post('/api/sticker-packs/:packId/install', (request, response) => {
   if (!pack) return response.status(404).json({ error: 'Public or unlisted pack not found' })
   db.prepare('INSERT OR IGNORE INTO installed_sticker_packs (user_id, pack_id) VALUES (?, ?)').run(user.id, request.params.packId)
   response.status(204).end()
+})
+app.post('/api/attachments', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const { name, mimeType, dataUrl } = request.body as { name?: string; mimeType?: string; dataUrl?: string }
+  if (!name || !mimeType || !dataUrl?.startsWith(`data:${mimeType};base64,`) || dataUrl.length > 6_500_000) return response.status(400).json({ error: 'Attachment is invalid or exceeds 5 MB' })
+  const id = randomUUID()
+  const byteSize = Buffer.byteLength(dataUrl.split(',')[1] || '', 'base64')
+  db.prepare('INSERT INTO attachments (id, uploader_id, name, mime_type, byte_size, data_url) VALUES (?, ?, ?, ?, ?, ?)').run(id, user.id, name.slice(0, 160), mimeType.slice(0, 120), byteSize, dataUrl)
+  response.status(201).json({ id, name, mimeType, byteSize, url: `/api/attachments/${id}` })
+})
+app.get('/api/attachments/:attachmentId', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const attachment = db.prepare('SELECT * FROM attachments WHERE id = ?').get(request.params.attachmentId) as { id: string; name: string; mime_type: string; data_url: string } | undefined
+  if (!attachment) return response.status(404).json({ error: 'Attachment not found' })
+  const hasAccess = db.prepare(`SELECT 1 FROM messages m JOIN chat_members cm ON cm.chat_id = m.chat_id WHERE cm.user_id = ? AND m.metadata_json LIKE ? LIMIT 1`).get(user.id, `%"attachmentId":"${attachment.id}"%`)
+  if (!hasAccess) return response.status(403).json({ error: 'Attachment is not shared with you' })
+  const content = Buffer.from(attachment.data_url.split(',')[1], 'base64')
+  response.type(attachment.mime_type).setHeader('Content-Disposition', `inline; filename="${attachment.name.replace(/"/g, '')}"`).send(content)
 })
 
 const httpServer = createServer(app)

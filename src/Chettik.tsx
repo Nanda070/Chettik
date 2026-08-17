@@ -324,7 +324,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     else if (action.startsWith('react-')) setMessages(old => old.map(item => item.id === selected.id ? { ...item, reactions: [...item.reactions, action.slice(6)] } : item))
     setMessageMenu(null)
   }
-  const deliver = async (rawText: string, kind: MessageKind = 'text', mediaExpiry?: MediaExpiry, stickerUrl?: string) => {
+  const deliver = async (rawText: string, kind: MessageKind = 'text', mediaExpiry?: MediaExpiry, stickerUrl?: string, attachmentId?: string) => {
     const text = rawText.trim()
     if (!text || text.length > 4000) return
     const chat = chatRows.find(row => row.name === selectedChat)
@@ -334,7 +334,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       return
     }
     if (!token) return
-    const response = await fetch(`${API_URL}/chats/${chat.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ text, kind, metadata: { ...(mediaExpiry ? { mediaExpiry } : {}), ...(stickerUrl ? { stickerUrl } : {}) } }) })
+    const response = await fetch(`${API_URL}/chats/${chat.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ text, kind, metadata: { ...(mediaExpiry ? { mediaExpiry } : {}), ...(stickerUrl ? { stickerUrl } : {}), ...(attachmentId ? { attachmentId } : {}) } }) })
     const remote = await response.json() as { id: string; created_at: string }
     if (!response.ok) return
     setMessages(old => old.some(item => item.id === remote.id) ? old : [...old, { id: remote.id, mine: true, sender: account.name, text, time: new Date(remote.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), reactions: [], replyTo: reply?.text, kind: kind === 'text' ? undefined : kind, mediaExpiry, stickerUrl }])
@@ -387,7 +387,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       </section>
       {settingsOpen && <SettingsDrawer account={account} profile={profile} setProfile={setProfile} token={token} dark={dark} setDark={setDark} language={language} onLanguage={onLanguage} onClose={() => setSettingsOpen(false)} onLogout={logout} />}
       {richOpen && <RichComposerSheet language={language} onClose={() => setRichOpen(false)} onSend={addRich} />}
-      {mediaFile && <MediaSendSheet file={mediaFile} language={language} onClose={() => setMediaFile(null)} onSend={mode => { void deliver(`📷 ${mediaFile.name}`, 'media', mode); setMediaFile(null) }} />}
+      {mediaFile && <MediaSendSheet file={mediaFile} language={language} onClose={() => setMediaFile(null)} onSend={mode => { void (async () => { const file = mediaFile; const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file) }); const upload = await fetch(`${API_URL}/attachments`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ name: file.name, mimeType: file.type, dataUrl }) }); if (upload.ok) { const attachment = await upload.json() as { id: string }; await deliver(`📷 ${file.name}`, 'media', mode, undefined, attachment.id) }; setMediaFile(null) })() }} />}
       {storyOpen && <div className="story-overlay" role="dialog" aria-modal="true" aria-label={`${storyOpen} story`} onClick={() => setStoryOpen(null)}><div className="story-card" onClick={e => e.stopPropagation()}><button aria-label="Close story" onClick={() => setStoryOpen(null)}><X size={19} /></button><div className="story-progress"><i /></div><div className="story-copy"><span className="avatar" style={{ background: storyOpen === 'Mark' ? '#6e4c97' : storyOpen === 'Nanda' ? '#9e2338' : '#bf8057' }}>{storyOpen[0]}</span><strong>{storyOpen}</strong><small>{language === 'RU' ? 'только что' : 'just now'}</small></div><p>{language === 'RU' ? 'Немного тишины между важными делами.' : 'A little quiet between important things.'}</p><small className="story-privacy"><ShieldCheck size={14} />{language === 'RU' ? 'История исчезнет через 24 часа' : 'This story disappears in 24 hours'}</small></div></div>}
       {profileOpen && <ProfilePanel account={profileAccount} phoneVisible={canViewPhone} onClose={() => setProfileOpen(false)} onStartSecret={() => startSecretChat(profileAccount)} onBlock={() => { setProfileOpen(false); setConfirm({ action: 'block' }) }} />}
       {groupOpen && <GroupPanel token={token} chats={chatRows.map(chat => ({ id: chat.id, name: chat.name }))} onClose={() => setGroupOpen(false)} />}
