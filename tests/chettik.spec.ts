@@ -29,6 +29,25 @@ test('seed account sends and edits inside the composer', async ({ page }) => {
   await expect(page.getByText('Edited without browser dialogs').last()).toBeVisible()
 })
 
+test('group info, editing and chat linking are interactive', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile')
+  await login(page)
+  await page.getByRole('button', { name: /Design circle/ }).click()
+  await page.getByRole('button', { name: 'Open group menu' }).click()
+  await expect(page.getByRole('button', { name: 'Delete and leave' })).toBeVisible()
+  await page.getByRole('button', { name: 'View group info' }).click()
+  await expect(page.getByRole('dialog', { name: 'Design circle group info' })).toBeVisible()
+  await expect(page.getByText('Group owner')).toBeVisible()
+  await page.getByRole('button', { name: 'Manage group' }).click()
+  await expect(page.getByRole('dialog', { name: 'Edit group' })).toBeVisible()
+  await expect(page.getByText('Group type')).toBeVisible()
+  await page.getByRole('button', { name: /Link existing chat/ }).click()
+  await expect(page.getByRole('dialog', { name: 'Link existing chat' })).toBeVisible()
+  await page.getByPlaceholder('Search chats').fill('Mark')
+  await page.locator('.group-link > button').first().click()
+  await expect(page.getByRole('dialog', { name: 'Edit group' })).toBeVisible()
+})
+
 test('long Mark chat scrolls messages while shell stays visible', async ({ page }, testInfo) => {
   await login(page)
   const composer = page.locator('.compose')
