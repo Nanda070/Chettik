@@ -2,6 +2,7 @@ import { ArrowRight, BellOff, Check, ChevronLeft, CircleUserRound, Copy, Edit3, 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import './App.css'
 import { API_URL, websocketUrl } from './api'
+import { decryptSecretMessage, encryptSecretMessage, getDeviceIdentity, loadSecretHistory, saveSecretHistory, type SecretHistoryItem } from './secretCrypto'
 import { SettingsDrawer } from './Stage3Panels'
 import { MediaSendSheet, type MediaExpiry, RichComposerSheet, VoiceButton } from './Stage4Panels'
 import { ChatContextMenu, ConfirmModal, type ConfirmAction, ForwardPanel, GroupPanel, MessageContextMenu, ProfilePanel } from './InteractionPanels'
@@ -205,6 +206,8 @@ function LegalPage({ doc, language, dark, onBack }: { doc: LegalDoc; language: '
 type MessengerProps = { account: Account; dark: boolean; setDark: (value: boolean) => void; language: Language; onLanguage: () => void; onLogout: () => void }
 type Channel = { id: string; title: string; description: string; username: string | null; visibility: 'public' | 'private'; owner_id: string; chat_id: string; subscriber_count: number; my_role: '' | 'owner' | 'admin' | 'subscriber' }
 type ChatRow = { id: string; name: ChatName; preview: string; time: string; initials: string; color: string; unread: number; kind?: string; secret?: boolean; channel?: Channel }
+type SecretDevice = { id: string; user_id: string; public_key: string; label: string }
+type SecretChat = { id: string; participant: Account; devices: SecretDevice[] }
 
 function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: MessengerProps) {
   const [message, setMessage] = useState('')
@@ -214,6 +217,8 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const [profile, setProfile] = useState<Profile>(() => ({ bio: '', github: '', discord: '', lastSeen: 'Contacts', blocked: [], privacy: { lastSeen: 'Contacts', photo: 'Everybody', bio: 'Everybody', birthday: 'Contacts', forwards: 'Everybody', voice: 'Contacts', messages: 'Everybody' }, privacyExceptions: {}, autoDelete: '6 months', pushEnabled: false, telemetryEnabled: false }))
   const [reports, setReports] = useState<string[]>([])
   const [chatRows, setChatRows] = useState<ChatRow[]>([])
+  const [secretChats, setSecretChats] = useState<Record<string, SecretChat>>({})
+  const [secretDevice, setSecretDevice] = useState<{ id: string; publicKey: string; privateKey: string } | null>(null)
   const [token, setToken] = useState('')
   const [search, setSearch] = useState('')
   const [reply, setReply] = useState<Message | null>(null)
@@ -274,13 +279,37 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     setReply(null)
     setEditing(null)
     setChatMenu(null)
+    const row = chatRows.find(item => item.name === chat)
+    if (row?.secret) {
+      const secret = secretChats[row.id]
+      if (secret) void openSecretHistory(secret)
+    }
   }
-  const startSecretChat = (target: Account = seedAccounts[1]) => {
-    const name = `Secret chat · ${target.name}`
-    const secret = { id: `secret-${target.email}`, name, preview: 'End-to-end on this device', time: '', initials: target.initials, color: target.color, unread: 0, secret: true }
-    setChatRows(current => current.some(chat => chat.id === secret.id) ? current : [secret, ...current])
-    setChatMessages(current => current[name] ? current : ({ ...current, [name]: [] }))
-    localStorage.setItem(`chettik-secret-chat-${account.email}-${target.email}`, JSON.stringify({ createdAt: new Date().toISOString(), deviceOnly: true }))
+  const openSecretHistory = async (chat: SecretChat, device = secretDevice) => {
+    if (!device || !token) return
+    const name = `Secret chat · ${chat.participant.name}`
+    const saved = await loadSecretHistory(chat.id)
+    const response = await fetch(`${API_URL}/secret-chats/${chat.id}/messages?deviceId=${encodeURIComponent(device.id)}`, { headers: { Authorization: `Bearer ${token}` } })
+    const encrypted = response.ok ? await response.json() as Array<{ id: string; sender_id: string; sender_key_id: string; ciphertext: string; nonce: string; created_at: string }> : []
+    const peerKeys = new Map(chat.devices.map(item => [item.id, item.public_key]))
+    const incoming: Array<SecretHistoryItem | null> = await Promise.all(encrypted.map(async item => {
+      const senderKey = peerKeys.get(item.sender_key_id)
+      if (!senderKey) return null
+      try { return { id: item.id, sender: chat.participant.name, text: await decryptSecretMessage(device.privateKey, senderKey, item.ciphertext, item.nonce), createdAt: item.created_at, mine: false } as SecretHistoryItem } catch { return null }
+    }))
+    const merged = [...saved, ...incoming.filter((item): item is SecretHistoryItem => Boolean(item)).filter(item => !saved.some(local => local.id === item.id))]
+    await saveSecretHistory(chat.id, merged)
+    setChatMessages(current => ({ ...current, [name]: merged.map(item => ({ id: item.id, sender: item.sender, text: item.text, time: new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), mine: item.mine, reactions: [] })) }))
+  }
+  const startSecretChat = async (target: Account = seedAccounts[1]) => {
+    if (!token || !target.id || !secretDevice) return
+    const response = await fetch(`${API_URL}/secret-chats`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ userId: target.id }) })
+    if (!response.ok) return
+    const chat = await response.json() as SecretChat
+    const name = `Secret chat · ${chat.participant.name}`
+    setSecretChats(current => ({ ...current, [chat.id]: chat }))
+    setChatRows(current => current.some(item => item.id === chat.id) ? current : [{ id: chat.id, name, preview: '🔒 End-to-end encrypted · this device', time: '', initials: chat.participant.initials, color: chat.participant.color, unread: 0, secret: true }, ...current])
+    await openSecretHistory(chat)
     openChat(name)
     setProfileOpen(false)
   }
@@ -310,18 +339,27 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       if (!apiToken) return
       setToken(apiToken)
       const headers = { Authorization: `Bearer ${apiToken}` }
-      const [profileResponse, chatsResponse, channelsResponse] = await Promise.all([fetch(`${API_URL}/me/profile`, { headers }), fetch(`${API_URL}/chats`, { headers }), fetch(`${API_URL}/channels`, { headers })])
-      if (!profileResponse.ok || !chatsResponse.ok || !channelsResponse.ok || disposed) return
+      const identity = await getDeviceIdentity(account.id || account.email)
+      const deviceResponse = await fetch(`${API_URL}/secret/devices`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ publicKey: identity.publicKey, label: 'Web browser' }) })
+      if (!deviceResponse.ok) return
+      const registeredDevice = await deviceResponse.json() as { id: string }
+      if (disposed) return
+      setSecretDevice({ ...identity, id: registeredDevice.id })
+      const [profileResponse, chatsResponse, channelsResponse, secretResponse] = await Promise.all([fetch(`${API_URL}/me/profile`, { headers }), fetch(`${API_URL}/chats`, { headers }), fetch(`${API_URL}/channels`, { headers }), fetch(`${API_URL}/secret-chats`, { headers })])
+      if (!profileResponse.ok || !chatsResponse.ok || !channelsResponse.ok || !secretResponse.ok || disposed) return
       const remoteProfile = await profileResponse.json() as Profile
       const remoteChats = await chatsResponse.json() as Array<{ id: string; title: ChatName; type: string; preview: string; last_message_at: string | null }>
       const remoteChannels = await channelsResponse.json() as Channel[]
+      const remoteSecretChats = await secretResponse.json() as SecretChat[]
       setChannels(remoteChannels)
       setProfile(current => ({ ...current, ...remoteProfile, privacy: { ...current.privacy, ...remoteProfile.privacy }, lastSeen: remoteProfile.privacy?.lastSeen || current.lastSeen }))
       const rows = remoteChats.map(item => {
         const channel = remoteChannels.find(value => value.chat_id === item.id)
         return { initials: item.title.slice(0, 1).toUpperCase(), color: item.type === 'saved' ? account.color : '#9e2338', id: item.id, name: item.title, preview: item.preview, time: item.last_message_at ? new Date(item.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '', unread: 0, kind: item.type, channel }
       })
-      setChatRows(rows)
+      const secretRows = remoteSecretChats.map(chat => ({ id: chat.id, name: `Secret chat · ${chat.participant.name}`, preview: '🔒 End-to-end encrypted · this device', time: '', initials: chat.participant.initials, color: chat.participant.color, unread: 0, secret: true }))
+      setSecretChats(Object.fromEntries(remoteSecretChats.map(chat => [chat.id, chat])))
+      setChatRows([...secretRows, ...rows])
       const packsResponse = await fetch(`${API_URL}/sticker-packs`, { headers })
       const packs = packsResponse.ok ? await packsResponse.json() as Array<{ id: string }> : []
       const packId = packs[0]?.id || 'chettik-starters'
@@ -446,17 +484,34 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     else if (action.startsWith('react-')) setMessages(old => old.map(item => item.id === selected.id ? { ...item, reactions: [...item.reactions, action.slice(6)] } : item))
     setMessageMenu(null)
   }
-  const deliver = async (rawText: string, kind: MessageKind = 'text', mediaExpiry?: MediaExpiry, stickerUrl?: string, attachmentId?: string) => {
+  const deliver = async (rawText: string, kind: MessageKind = 'text', mediaExpiry?: MediaExpiry, stickerUrl?: string, mediaId?: string) => {
     const text = rawText.trim()
     if (!text || text.length > 4000) return
     const chat = chatRows.find(row => row.name === selectedChat)
     if (!chat || (chat.channel && !canPublish)) return
     if (chat.secret) {
-      setMessages(old => [...old, { id: crypto.randomUUID(), mine: true, sender: account.name, text, time: 'now', reactions: [], kind, mediaExpiry, stickerUrl }])
+      const secret = secretChats[chat.id]
+      if (!secret || !secretDevice) return
+      const recipients = secret.devices.filter(device => device.user_id === secret.participant.id)
+      const envelopes = await Promise.all(recipients.map(async device => ({
+        recipientKeyId: device.id,
+        ...await encryptSecretMessage(secretDevice.privateKey, device.public_key, text),
+      })))
+      const response = await fetch(`${API_URL}/secret-chats/${chat.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ senderKeyId: secretDevice.id, envelopes }),
+      })
+      if (!response.ok) return
+      const created = await response.json() as { createdAt: string }
+      const local: SecretHistoryItem = { id: crypto.randomUUID(), sender: account.name, text, createdAt: created.createdAt, mine: true }
+      const history = [...await loadSecretHistory(chat.id), local]
+      await saveSecretHistory(chat.id, history)
+      setMessages(old => [...old, { id: local.id, mine: true, sender: account.name, text, time: 'now', reactions: [], kind, mediaExpiry, stickerUrl }])
       return
     }
     if (!token) return
-    const response = await fetch(`${API_URL}/chats/${chat.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ text, kind, metadata: { ...(mediaExpiry ? { mediaExpiry } : {}), ...(stickerUrl ? { stickerUrl } : {}), ...(attachmentId ? { attachmentId } : {}) } }) })
+    const response = await fetch(`${API_URL}/chats/${chat.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ text, kind, mediaId, metadata: { ...(mediaExpiry ? { mediaExpiry } : {}), ...(stickerUrl ? { stickerUrl } : {}) } }) })
     const remote = await response.json() as { id: string; created_at: string }
     if (!response.ok) return
     setMessages(old => old.some(item => item.id === remote.id) ? old : [...old, { id: remote.id, mine: true, sender: account.name, text, time: new Date(remote.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), reactions: [], replyTo: reply?.text, kind: kind === 'text' ? undefined : kind, mediaExpiry, stickerUrl }])
@@ -472,7 +527,16 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     setReply(null)
     setEditing(null)
   }
-  const attach = (file?: File) => { if (!file) return; if (file.type.startsWith('image/') || file.type.startsWith('video/')) setMediaFile(file); else void deliver(`📎 ${file.name} · ${Math.ceil(file.size / 1024)} KB`) }
+  const uploadAndDeliver = async (file: File, expiry?: MediaExpiry) => {
+    if (!token) return
+    const form = new FormData()
+    form.append('file', file)
+    const upload = await fetch(`${API_URL}/media`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form })
+    if (!upload.ok) return
+    const media = await upload.json() as { id: string; name: string; mimeType: string; byteSize: number; url: string }
+    await deliver(`📎 ${media.name} · ${Math.ceil(media.byteSize / 1024)} KB`, 'media', expiry, undefined, media.id)
+  }
+  const attach = (file?: File) => { if (!file) return; if (file.type.startsWith('image/') || file.type.startsWith('video/')) setMediaFile(file); else void uploadAndDeliver(file) }
   const uploadSticker = async (file?: File) => {
     if (!file || !['image/png', 'image/webp', 'image/gif'].includes(file.type) || file.size > 1_000_000 || !token) return
     const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file) })
@@ -506,7 +570,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
         </div>
       </aside><div className="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize chat list" onPointerDown={startSidebarResize} />
       <section className="chat">
-        {!inboxEmpty && <header className="chat-head"><button className="icon-btn mobile-menu" aria-label="Open main menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>{selectedChannel ? <><button className="icon-btn profile-open" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><div className="avatar channel-avatar" style={{ background: '#9e2338' }}><MessageCircle size={18} /></div></button><button className="chat-person profile-open" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><strong>{selectedChannel.title}</strong><span>{selectedChannel.subscriber_count} subscriber{selectedChannel.subscriber_count === 1 ? '' : 's'} · channel</span></button></> : selectedChat === 'Mark' ? <><button className="icon-btn profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><div className="avatar" style={{ background: '#6e4c97' }}>M</div></button><button className="chat-person profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><strong>Mark <span className="badge">ADMIN</span></strong><span>online · cloud chat</span></button></> : <><button className="icon-btn profile-open" aria-label={selectedRow?.kind === 'group' ? 'Open group info' : 'Open user profile'} onClick={() => selectedRow?.kind === 'group' ? setGroupOpen(true) : selectedChat !== 'Saved Messages' && (setProfileAccount(seedAccounts.find(person => person.name === selectedChat) || seedAccounts[1]), setProfileOpen(true))}><div className="avatar" style={{ background: selectedChat === 'Saved Messages' ? account.color : chatRows.find(chat => chat.name === selectedChat)?.color }}>{selectedChat === 'Saved Messages' ? account.initials : selectedChat[0]}</div></button><button className="chat-person profile-open" onClick={() => selectedRow?.kind === 'group' ? setGroupOpen(true) : selectedChat !== 'Saved Messages' && (setProfileAccount(seedAccounts.find(person => person.name === selectedChat) || seedAccounts[1]), setProfileOpen(true))}><strong>{selectedChat}</strong><span>{selectedChat === 'Saved Messages' ? 'Messages saved for yourself' : selectedRow?.kind === 'group' ? 'group chat' : 'cloud chat'}</span></button></>}<div className="head-actions">{selectedChannel && <><button className="icon-btn" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><Users size={19} /></button><button className="icon-btn" aria-label="Open channel menu" onClick={() => setChannelMenuOpen(true)}><MoreHorizontal size={19} /></button></>}{selectedRow?.kind === 'group' && <button className="icon-btn" aria-label="Open group menu" onClick={() => setGroupMenuOpen(true)}><MoreHorizontal size={19} /></button>}<button className="icon-btn header-action" title="Switch language" onClick={onLanguage}>{language}</button><button className="icon-btn header-action" aria-label="Toggle theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header>}
+        {!inboxEmpty && <header className="chat-head"><button className="icon-btn mobile-menu" aria-label="Open main menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>{selectedChannel ? <><button className="icon-btn profile-open" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><div className="avatar channel-avatar" style={{ background: '#9e2338' }}><MessageCircle size={18} /></div></button><button className="chat-person profile-open" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><strong>{selectedChannel.title}</strong><span>{selectedChannel.subscriber_count} subscriber{selectedChannel.subscriber_count === 1 ? '' : 's'} · channel</span></button></> : selectedRow?.secret ? <><div className="avatar" style={{ background: selectedRow.color }}><Lock size={17} /></div><div className="chat-person"><strong><Lock size={14} /> {selectedChat}</strong><span>End-to-end encrypted · this device only</span></div></> : selectedChat === 'Mark' ? <><button className="icon-btn profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><div className="avatar" style={{ background: '#6e4c97' }}>M</div></button><button className="chat-person profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><strong>Mark <span className="badge">ADMIN</span></strong><span>online · cloud chat</span></button></> : <><button className="icon-btn profile-open" aria-label={selectedRow?.kind === 'group' ? 'Open group info' : 'Open user profile'} onClick={() => selectedRow?.kind === 'group' ? setGroupOpen(true) : selectedChat !== 'Saved Messages' && (setProfileAccount(seedAccounts.find(person => person.name === selectedChat) || seedAccounts[1]), setProfileOpen(true))}><div className="avatar" style={{ background: selectedChat === 'Saved Messages' ? account.color : chatRows.find(chat => chat.name === selectedChat)?.color }}>{selectedChat === 'Saved Messages' ? account.initials : selectedChat[0]}</div></button><button className="chat-person profile-open" onClick={() => selectedRow?.kind === 'group' ? setGroupOpen(true) : selectedChat !== 'Saved Messages' && (setProfileAccount(seedAccounts.find(person => person.name === selectedChat) || seedAccounts[1]), setProfileOpen(true))}><strong>{selectedChat}</strong><span>{selectedChat === 'Saved Messages' ? 'Messages saved for yourself' : selectedRow?.kind === 'group' ? 'group chat' : 'cloud chat'}</span></button></>}<div className="head-actions">{selectedChannel && <><button className="icon-btn" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><Users size={19} /></button><button className="icon-btn" aria-label="Open channel menu" onClick={() => setChannelMenuOpen(true)}><MoreHorizontal size={19} /></button></>}{selectedRow?.kind === 'group' && <button className="icon-btn" aria-label="Open group menu" onClick={() => setGroupMenuOpen(true)}><MoreHorizontal size={19} /></button>}<button className="icon-btn header-action" title="Switch language" onClick={onLanguage}>{language}</button><button className="icon-btn header-action" aria-label="Toggle theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header>}
         {inboxEmpty ? <div className="inbox-empty"><div className="inbox-empty-icon"><MessageCircle size={34} strokeWidth={1.6} /></div><h2>{language === 'RU' ? 'Пока нет чатов' : 'No chats yet'}</h2><p>{language === 'RU' ? 'Начните личный диалог, создайте группу или откройте канал.' : 'Start a direct conversation, create a group, or open a channel.'}</p><div><button className="empty-primary" onClick={() => void openContacts()}>{language === 'RU' ? 'Новый чат' : 'New chat'}</button><button onClick={() => setCreateGroupOpen(true)}>{language === 'RU' ? 'Новая группа' : 'New group'}</button><button onClick={() => setCreateChannelOpen(true)}>{language === 'RU' ? 'Новый канал' : 'New channel'}</button></div></div> : <><div className="messages" aria-live="polite"><div className="date">{language === 'RU' ? 'Сегодня' : 'Today'}</div>{matches.map(item => <div onContextMenu={event => { event.preventDefault(); setMessageMenu(item) }} className={`message ${item.mine ? 'mine' : ''}`} key={item.id}><div className="avatar" style={{ background: item.mine ? account.color : '#6e4c97' }}>{item.mine ? account.initials : 'M'}</div><div className={`bubble ${item.kind ? `bubble-${item.kind}` : ''}`}>{item.replyTo && <small className="reply-ref">↳ {item.replyTo}</small>}{item.kind !== 'sticker' && <span className="sender">{item.sender}</span>}{item.kind === 'sticker' ? <img className="sticker-message" src={item.stickerUrl} alt={item.text} /> : item.kind === 'voice' ? <div className="voice-message"><span className="voice-wave">▁▃▆▇▅▇▃▂</span><strong>{item.text}</strong></div> : item.kind === 'circle' ? <div className="circle-message"><span>▶</span><small>{item.text}</small></div> : item.kind === 'media' ? <button className="timed-media" aria-label="Open timed media" onClick={() => { if (item.mediaExpiry === 'once') setMessages(old => old.filter(message => message.id !== item.id)); else if (item.mediaExpiry && item.mediaExpiry !== 'never') { setMessages(old => old.map(message => message.id === item.id ? { ...message, opened: true } : message)); window.setTimeout(() => setMessages(old => old.filter(message => message.id !== item.id)), Number(item.mediaExpiry) * 1000) } }}><span>▧</span><strong>{item.opened ? 'Media opened' : item.text}</strong><small>{item.mediaExpiry === 'once' ? '1 · View once' : item.mediaExpiry === 'never' || !item.mediaExpiry ? 'Saved media' : `${item.mediaExpiry}s · tap to view`}</small></button> : item.kind === 'location' ? <div className="location-message"><span>⌖</span><strong>{item.text}</strong><small>Private chat location</small></div> : item.kind === 'poll' ? <div className="poll-message"><strong>{item.text}</strong><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted, pollVotes: (m.pollVotes || 0) + (m.voted ? -1 : 1) } : m))}>{item.voted ? '✓ Yes, works for me' : 'Yes, works for me'} <em>{item.pollVotes || 0}</em></button><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted } : m))}>Need another time</button><small>{item.pollVotes || 0} votes · public in this chat</small></div> : item.text}<div className="message-tools" /><span className="meta">{item.time} {item.mine ? '✓✓' : ''}</span></div></div>)}</div>
         <form className={`compose ${editing ? 'editing' : ''}`} onSubmit={(e) => { e.preventDefault(); send() }}>
           {(reply || editing) && <div className="compose-context"><Pencil size={17} /><span><strong>{editing ? 'Edit message' : 'Replying to Mark'}</strong><small>{(editing || reply)?.text.slice(0, 72)}</small></span><button type="button" onClick={() => { setEditing(null); setReply(null); setMessage('') }}><X size={17} /></button></div>}
@@ -518,7 +582,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       {settingsOpen && <SettingsDrawer account={account} profile={profile} setProfile={setProfile} token={token} dark={dark} setDark={setDark} language={language} onLanguage={onLanguage} onClose={() => setSettingsOpen(false)} onLogout={logout} />}
       {contactsOpen && <ContactsPanel contacts={contacts} onClose={() => setContactsOpen(false)} onSelect={contact => void startDirectChat(contact)} />}
       {richOpen && <RichComposerSheet language={language} onClose={() => setRichOpen(false)} onSend={addRich} />}
-      {mediaFile && <MediaSendSheet file={mediaFile} language={language} onClose={() => setMediaFile(null)} onSend={mode => { void (async () => { const file = mediaFile; const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file) }); const upload = await fetch(`${API_URL}/attachments`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ name: file.name, mimeType: file.type, dataUrl }) }); if (upload.ok) { const attachment = await upload.json() as { id: string }; await deliver(`📷 ${file.name}`, 'media', mode, undefined, attachment.id) }; setMediaFile(null) })() }} />}
+      {mediaFile && <MediaSendSheet file={mediaFile} language={language} onClose={() => setMediaFile(null)} onSend={mode => { void (async () => { await uploadAndDeliver(mediaFile, mode); setMediaFile(null) })() }} />}
       {storyOpen && <div className="story-overlay" role="dialog" aria-modal="true" aria-label={`${storyOpen} story`} onClick={() => setStoryOpen(null)}><div className="story-card" onClick={e => e.stopPropagation()}><button aria-label="Close story" onClick={() => setStoryOpen(null)}><X size={19} /></button><div className="story-progress"><i /></div><div className="story-copy"><span className="avatar" style={{ background: storyOpen === 'Mark' ? '#6e4c97' : storyOpen === 'Nanda' ? '#9e2338' : '#bf8057' }}>{storyOpen[0]}</span><strong>{storyOpen}</strong><small>{language === 'RU' ? 'только что' : 'just now'}</small></div><p>{language === 'RU' ? 'Немного тишины между важными делами.' : 'A little quiet between important things.'}</p><small className="story-privacy"><ShieldCheck size={14} />{language === 'RU' ? 'История исчезнет через 24 часа' : 'This story disappears in 24 hours'}</small></div></div>}
       {profileOpen && <ProfilePanel account={profileAccount} onClose={() => setProfileOpen(false)} onStartSecret={() => startSecretChat(profileAccount)} onBlock={() => { setProfileOpen(false); setConfirm({ action: 'block' }) }} />}
       {groupOpen && <GroupPanel token={token} chatId={selectedRow?.id} chats={chatRows.map(chat => ({ id: chat.id, name: chat.name }))} onClose={() => setGroupOpen(false)} />}
@@ -538,7 +602,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
 }
 
 function ChatListRow({ chat, selected, muted, onOpen, onMenu }: { chat: ChatRow; selected: boolean; muted: boolean; onOpen: (name: ChatName) => void; onMenu: (value: { name: ChatName; x: number; y: number }) => void }) {
-  return <button onClick={() => onOpen(chat.name)} onContextMenu={event => { event.preventDefault(); onMenu({ name: chat.name, x: event.clientX, y: event.clientY }) }} className={`chat-row ${selected ? 'active' : ''}`}><div className={`avatar ${chat.channel ? 'channel-avatar' : ''}`} style={{ background: chat.color }}>{chat.channel ? <MessageCircle size={18} /> : chat.initials}</div><div className="chat-copy"><div className="chat-name">{chat.name}{chat.channel ? <span className="channel-mark">CHANNEL</span> : null}<span className="time">{chat.time}</span></div><div className="chat-preview">{muted ? 'Muted' : chat.preview || (chat.name === 'Saved Messages' ? 'Messages saved for yourself' : '')}</div></div>{chat.unread ? <span className="unread">{chat.unread}</span> : null}</button>
+  return <button onClick={() => onOpen(chat.name)} onContextMenu={event => { event.preventDefault(); onMenu({ name: chat.name, x: event.clientX, y: event.clientY }) }} className={`chat-row ${selected ? 'active' : ''}`}><div className={`avatar ${chat.channel ? 'channel-avatar' : ''}`} style={{ background: chat.color }}>{chat.secret ? <Lock size={16} /> : chat.channel ? <MessageCircle size={18} /> : chat.initials}</div><div className="chat-copy"><div className="chat-name">{chat.name}{chat.secret ? <Lock size={13} aria-label="End-to-end encrypted" /> : null}{chat.channel ? <span className="channel-mark">CHANNEL</span> : null}<span className="time">{chat.time}</span></div><div className="chat-preview">{muted ? 'Muted' : chat.preview || (chat.name === 'Saved Messages' ? 'Messages saved for yourself' : '')}</div></div>{chat.unread ? <span className="unread">{chat.unread}</span> : null}</button>
 }
 
 function ContactsPanel({ contacts, onClose, onSelect }: { contacts: Account[]; onClose: () => void; onSelect: (contact: Account) => void }) {

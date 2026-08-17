@@ -23,17 +23,38 @@ in `server/index.ts` is retained only as a historical reference and is no longer
 
 The database is `chettik.db`. Startup removes legacy showcase conversations and preserves only the three email-login accounts plus each account's empty Saved Messages chat.
 
-## Sign in
+## Sign in and SMTP
 
-Use one of the local accounts and the `OTP_DEV_CODE` from `.env`:
+Configure SMTP in your untracked `.env`. The API generates a random six-digit OTP,
+stores only its scrypt hash, and sends the code with SMTP. Delivery errors are logged
+and fail the request; they never silently accept a code.
 
-| Email | Code |
-| --- | --- |
-| `test@test.com` | `123456` |
-| `test2@test.com` | `123456` |
-| `test3@test.com` | `123456` |
+For isolated CI/local tests only, explicitly set `OTP_DEV_CODE=123456`; it bypasses
+SMTP and is never a production fallback. The seeded addresses are `test@test.com`,
+`test2@test.com`, and `test3@test.com`.
 
 After signing in, use **New chat**, **New group**, or **New channel**. Direct chats, groups, channels, and messages are stored in SQLite.
+
+## Secret chats
+
+Secret chats are device-bound and use `libsodium-wrappers-sumo`: X25519 key agreement
+via `crypto_box` (XSalsa20-Poly1305 authenticated encryption). Browser-generated
+key pairs and decrypted history are encrypted at rest in IndexedDB using a
+non-extractable Web Crypto AES-GCM device key. The server only receives public keys,
+opaque ciphertext/nonce envelopes, and routing metadata; it does not receive secret
+message plaintext.
+
+This is not Signal or Telegram MTProto: there is no ratchet, forward secrecy,
+multi-device secret-chat synchronization, identity verification UI, recovery, or
+independent cryptographic audit. Losing browser storage loses that device's history.
+
+## Media storage
+
+`POST /api/media` accepts authenticated multipart uploads (25 MB by default) with an
+allow-list of content types. UUID-named files are stored in `backend/media/`, while
+SQLite stores media ID, MIME type, size, and message linkage. Downloads require a
+chat membership check. `backend/storage.py` defines the storage interface so an
+S3/CDN adapter can replace `LocalStorage` later.
 
 ## Build and preview
 

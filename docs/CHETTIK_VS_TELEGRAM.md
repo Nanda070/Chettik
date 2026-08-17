@@ -4,15 +4,15 @@ This is an honest implementation checkpoint, not a claim of feature parity or pr
 
 | Feature area | Telegram | Chettik now | How Telegram does it | How Chettik does it | Gap |
 |---|---|---|---|---|---|
-| Auth | Phone OTP, QR and passkeys | Email OTP and email-session QR shell | Global multi-device identity service | SQLite email OTP challenges, expiry, throttling and revocable sessions | Transactional email delivery, passkeys and real QR pairing remain |
+| Auth | Phone OTP, QR and passkeys | SMTP email OTP and email-session QR shell | Global multi-device identity service | scrypt-hashed SQLite OTP challenges, SMTP delivery, expiry, throttling and revocable sessions | Passkeys and real QR pairing remain |
 | Chats / Saved | Direct, group, channel and Saved Messages | Direct, group, channel and Saved Messages | Server-side synced conversations | SQLite chat/member rows | Folders and robust membership administration remain |
 | Groups | Roles, invites, topics, permissions | Group info/edit panel, owner/admin invite endpoint and primary chat binding | Rich server-authorized group model | SQLite groups and group members | Invite links and topics remain |
 | Messages | Sync, edit/delete, reply, forward, pins, reactions | Send, edit/delete, reply, forward, pins and reactions | Globally distributed message service | Express, SQLite and WebSocket events | Reactions and pins persist; reply/forward state and receiver synchronization remain |
-| Media / files | CDN, transcoding, previews and access rules | Uploads persisted in SQLite, authenticated download endpoint, timed-media UI | Object storage and media pipelines | Size-limited data-URL attachment records linked through message metadata | 5 MB local implementation; no object storage, scanning, thumbnails or retention |
+| Media / files | CDN, transcoding, previews and access rules | Multipart uploads and authenticated local downloads | Object storage and media pipelines | UUID files in local storage; SQLite media ID/MIME/size/message linkage; replaceable storage interface | No S3/CDN adapter, scanning, thumbnails, transcoding or retention |
 | Voice / circles | Recorded media with streaming and playback | Composer UI placeholders | Native media encoding/playback | Message-kind UI | No real audio/video capture or playback |
 | View-once / timed | Receiver-enforced cloud/secret timers | View-once, 3/10/30s metadata and local expiry UI | Protocol/client enforcement plus server metadata | Cloud metadata, local receiver UI state | No cross-device view synchronization or hardened expiry |
 | Stickers / packs | Curated and user packs, sharing, analytics | PNG/WebP/GIF upload, packs, install endpoint, picker and messages | Pack CDN and Telegram pack identifiers | SQLite pack/sticker records; embedded data URLs | No reorder UI, share-link UI, moderation or conversion; HEIC unsupported |
-| Secret chats | Device-bound E2E with key exchange | Device-local chat entry and local message route | MTProto secret-chat protocol | Browser-local storage and no cloud message call | Not encrypted IndexedDB, no handshake, no independent audit — must not be described as E2E |
+| Secret chats | Device-bound E2E with key exchange | Device-bound encrypted secret chats | MTProto secret-chat protocol | libsodium X25519 `crypto_box`; public-key signaling and opaque server envelopes; AES-GCM-encrypted IndexedDB device history | No ratchet/forward secrecy, verification UI, recovery, multi-device sync or independent audit |
 | Privacy | Granular server policy and block lists | Profile privacy, blocks and local auto-delete controls | Mature policy system | SQLite profiles/settings | Exceptions and enforcement are incomplete |
 | Devices | Session list, QR devices, terminate sessions | Current device list and terminate-other-sessions | Cross-device authorization service | Revocable SQLite sessions, dedupe by device identity | No real QR pairing or passkey management |
 | Profiles / badges | Usernames, identity and Premium badges | Profiles, social links and persisted demo badge catalog | Account profile service | SQLite users/profiles/badges JSON | Badge issuance is seed/demo only |
@@ -25,7 +25,7 @@ This is an honest implementation checkpoint, not a claim of feature parity or pr
 
 ## Security and production readiness
 
-Chettik has development-grade email OTP/session controls and authenticated attachment access checks. It still needs deployed-origin CSRF/CORS policy, audit logs, backups, malware scanning, secure object storage, authorization integration tests, encrypted secret-chat storage, key management, and an external security review before public use.
+Chettik has SMTP OTP/session controls, authenticated media access checks, and a constrained device-bound E2E implementation. It still needs deployed-origin CSRF/CORS policy, audit logs, backups, malware scanning, secure object storage, authorization integration tests, a ratchet/identity verification/recovery design, and an external security review before public use.
 
 ## Product conclusion
 
