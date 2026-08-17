@@ -152,7 +152,7 @@ test('telegram main menu routes supported Stage 4 entries', async ({ page }, tes
   test.skip(testInfo.project.name !== 'desktop', 'Desktop menu only')
   await login(page)
   await page.getByRole('button', { name: 'Open main menu' }).click()
-  await expect(page.getByText('Chettik Web', { exact: true })).toBeVisible()
+  await expect(page.locator('.main-menu footer')).toContainText('Chettik Web')
   await expect(page.getByText('Wallet', { exact: true })).toHaveCount(0)
   await page.getByText('New Group', { exact: true }).click()
   await expect(page.getByRole('heading', { name: 'New Group' })).toBeVisible()
