@@ -31,20 +31,26 @@ test('QR-first authentication is polished and exposes six OTP cells', async ({ p
 })
 
 test('new inbox creates direct chats, groups, channels and messages', async ({ page }, testInfo) => {
-  await login(page, testInfo.project.name === 'mobile' ? 'test2@test.com' : 'test@test.com')
-  await expect(page.getByText('No chats yet')).toBeVisible()
-  await page.locator('.inbox-empty').getByRole('button', { name: 'New chat' }).click()
+  const mobile = testInfo.project.name === 'mobile'
+  await login(page, mobile ? 'test4@test.com' : 'test3@test.com')
+  const emptyAction = mobile ? page.locator('.chat-list-empty').getByRole('button', { name: 'New chat' }) : page.locator('.inbox-empty').getByRole('button', { name: 'New chat' })
+  if (await emptyAction.isVisible()) await emptyAction.click()
+  else if (mobile) { await page.getByRole('button', { name: 'Open main menu' }).click(); await page.getByRole('button', { name: 'New chat' }).click() }
+  else await page.locator('.sidebar').getByLabel('New chat').click()
   await expect(page.getByRole('dialog', { name: 'Contacts' })).toBeVisible()
   await page.locator('.contacts-panel > div > button').first().click()
   await page.getByRole('textbox', { name: 'Message text' }).fill('A real local message')
   await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText('A real local message')).toBeVisible()
+  await expect(page.locator('.messages .bubble').getByText('A real local message')).toBeVisible()
 
   await page.getByRole('button', { name: 'Open main menu' }).click()
   await page.getByRole('button', { name: 'New group' }).click()
   await page.getByRole('textbox', { name: 'Group name' }).fill('Project team')
   await page.getByRole('button', { name: 'Create group' }).click()
   await expect(page.locator('.chat-head')).toContainText('Project team')
+  await page.getByRole('button', { name: 'Open group info' }).click()
+  await expect(page.getByRole('dialog', { name: /Project team group info/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Close group info' }).click()
 
   await page.getByRole('button', { name: 'Open main menu' }).click()
   await page.getByRole('button', { name: 'New channel' }).click()
@@ -52,4 +58,10 @@ test('new inbox creates direct chats, groups, channels and messages', async ({ p
   await page.getByRole('textbox', { name: 'Channel handle' }).fill(`release_${Date.now()}`)
   await page.getByRole('button', { name: 'Create channel' }).click()
   await expect(page.locator('.chat-head')).toContainText('Release notes')
+  await page.getByRole('button', { name: 'Open channel info' }).first().click()
+  await expect(page.getByRole('dialog', { name: /Release notes channel info/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Invite link' }).click()
+  await expect(page.getByText('Invite link ready')).toBeVisible()
+  await page.locator('.invite-link').click()
+  await expect(page.getByText('Invite link copied')).toBeVisible()
 })

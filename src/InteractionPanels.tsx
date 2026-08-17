@@ -52,19 +52,22 @@ export function ProfilePanel({ account, onClose, onBlock, onStartSecret }: { acc
 }
 
 type GroupRecord = { id: string; title: string; description: string; owner_id: string; primary_chat_id: string | null; member_count: number }
-export function GroupPanel({ token, chats, onClose }: { token: string; chats: Array<{ id: string; name: string }>; onClose: () => void }) {
+export function GroupPanel({ token, chatId, chats, onClose }: { token: string; chatId?: string; chats: Array<{ id: string; name: string }>; onClose: () => void }) {
   const [group, setGroup] = useState<GroupRecord | null>(null)
-  const [view, setView] = useState<'info' | 'edit' | 'link'>('info')
+  const [view, setView] = useState<'info' | 'edit' | 'link' | 'invite'>('info')
   const [title, setTitle] = useState('Design circle')
   const [description, setDescription] = useState('')
   const [search, setSearch] = useState('')
   const [moreOpen, setMoreOpen] = useState(false)
+  const [people, setPeople] = useState<Account[]>([])
+  const [inviteUrl, setInviteUrl] = useState('')
+  const [inviteNotice, setInviteNotice] = useState('')
   useEffect(() => {
     fetch(`${API_URL}/groups`, { headers: { Authorization: `Bearer ${token}` } }).then(response => response.json()).then((items: GroupRecord[]) => {
-      const current = items.find(item => item.id === 'design-circle') || items[0]
+      const current = items.find(item => item.primary_chat_id === chatId) || items[0]
       if (current) { setGroup(current); setTitle(current.title); setDescription(current.description) }
     }).catch(() => undefined)
-  }, [token])
+  }, [chatId, token])
   const save = async () => {
     if (!group) return
     const response = await fetch(`${API_URL}/groups/${group.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ title, description }) })
@@ -75,11 +78,28 @@ export function GroupPanel({ token, chats, onClose }: { token: string; chats: Ar
     const response = await fetch(`${API_URL}/groups/${group.id}/link-chat`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ chatId }) })
     if (response.ok) { setGroup({ ...group, primary_chat_id: chatId }); setView('edit') }
   }
-  return <div className="profile-overlay" role="dialog" aria-modal="true" aria-label={view === 'info' ? 'Design circle group info' : view === 'edit' ? 'Edit group' : 'Link existing chat'} onClick={onClose}>
-    <aside className="profile-panel group-panel" onClick={event => event.stopPropagation()}><header><button aria-label={view === 'info' ? 'Close group info' : 'Back'} onClick={() => view === 'info' ? onClose() : setView(view === 'link' ? 'edit' : 'info')}>{view === 'info' ? <X size={20} /> : <ArrowLeft size={20} />}</button><strong>{view === 'info' ? 'Group info' : view === 'edit' ? 'Edit group' : 'Link existing chat'}</strong>{view === 'info' ? <button aria-label="Manage group" onClick={() => setView('edit')}><Edit3 size={19} /></button> : view === 'edit' ? <button className="group-save" onClick={() => void save()}>Save</button> : <span />}</header>
-      {view === 'info' && <><div className="profile-hero"><div className="avatar profile-photo">D</div><h2>{group?.title || title}</h2><span>{group?.member_count || 3} members</span></div><div className="profile-actions"><button><BellOff size={19} /><small>Mute</small></button><button onClick={() => setView('edit')}><Edit3 size={19} /><small>Manage</small></button><button onClick={() => setMoreOpen(!moreOpen)}><MoreHorizontal size={19} /><small>More</small></button></div>{moreOpen && <div className="group-profile-menu context-menu"><button onClick={() => setMoreOpen(false)}><Clock3 size={16} />Auto-delete</button><button onClick={() => setMoreOpen(false)}><UserRound size={16} />Add members</button><button onClick={() => { setMoreOpen(false); setView('edit') }}><Edit3 size={16} />Manage group</button><button onClick={() => setMoreOpen(false)}><Share2 size={16} />Export chat history</button><button onClick={() => setMoreOpen(false)}><Archive size={16} />Add to folder</button></div>}<section className="shared-stub"><strong>Shared media</strong><div><button><b>12</b><small>Photos</small></button><button><b>4</b><small>Files</small></button><button><b>2</b><small>Links</small></button></div></section><div className="tg-section">Members</div><div className="group-members">{[['Nanda', 'owner'], ['Mark', 'admin'], ['Alisher', 'member']].map(([name, role]) => <button key={name}><span className="avatar">{name[0]}</span><span><strong>{name}</strong><small>{role === 'owner' ? 'Group owner' : role}</small></span>{role === 'owner' && <em>OWNER</em>}</button>)}<button className="group-add"><UserRound size={18} />Add member</button></div></>}
+  const openInvites = async () => {
+    setView('invite')
+    const response = await fetch(`${API_URL}/users`, { headers: { Authorization: `Bearer ${token}` } })
+    if (response.ok) setPeople(await response.json() as Account[])
+  }
+  const createInvite = async () => {
+    if (!group) return
+    const response = await fetch(`${API_URL}/groups/${group.id}/invite-link`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+    const payload = await response.json() as { url?: string; error?: string }
+    if (response.ok && payload.url) { setInviteUrl(payload.url); setInviteNotice('Invite link ready') } else setInviteNotice(payload.error || 'Could not create an invite link')
+  }
+  const addMember = async (person: Account) => {
+    if (!group || !person.id) return
+    const response = await fetch(`${API_URL}/groups/${group.id}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ userId: person.id }) })
+    setInviteNotice(response.ok ? `${person.name} added` : 'Could not add member')
+  }
+  return <div className="profile-overlay" role="dialog" aria-modal="true" aria-label={view === 'info' ? `${group?.title || title} group info` : view === 'edit' ? 'Edit group' : view === 'invite' ? 'Invite members' : 'Link existing chat'} onClick={onClose}>
+    <aside className="profile-panel group-panel" onClick={event => event.stopPropagation()}><header><button aria-label={view === 'info' ? 'Close group info' : 'Back'} onClick={() => view === 'info' ? onClose() : setView(view === 'link' ? 'edit' : 'info')}>{view === 'info' ? <X size={20} /> : <ArrowLeft size={20} />}</button><strong>{view === 'info' ? 'Group info' : view === 'edit' ? 'Edit group' : view === 'invite' ? 'Invite members' : 'Link existing chat'}</strong>{view === 'info' ? <button aria-label="Manage group" onClick={() => setView('edit')}><Edit3 size={19} /></button> : view === 'edit' ? <button className="group-save" onClick={() => void save()}>Save</button> : <span />}</header>
+      {view === 'info' && <><div className="profile-hero"><div className="avatar profile-photo">D</div><h2>{group?.title || title}</h2><span>{group?.member_count || 1} members</span></div><div className="profile-actions"><button><BellOff size={19} /><small>Mute</small></button><button onClick={() => void openInvites()}><UserRound size={19} /><small>Add members</small></button><button onClick={() => setMoreOpen(!moreOpen)}><MoreHorizontal size={19} /><small>More</small></button></div>{moreOpen && <div className="group-profile-menu context-menu"><button onClick={() => setMoreOpen(false)}><Clock3 size={16} />Auto-delete</button><button onClick={() => { setMoreOpen(false); void openInvites() }}><UserRound size={16} />Add members</button><button onClick={() => { setMoreOpen(false); setView('edit') }}><Edit3 size={16} />Manage group</button><button onClick={() => setMoreOpen(false)}><Share2 size={16} />Export chat history</button><button onClick={() => setMoreOpen(false)}><Archive size={16} />Add to folder</button></div>}<section className="shared-stub"><strong>Shared media</strong><div><button><b>12</b><small>Photos</small></button><button><b>4</b><small>Files</small></button><button><b>2</b><small>Links</small></button></div></section><div className="tg-section">Members</div><div className="group-members"><button className="group-add" onClick={() => void openInvites()}><UserRound size={18} />Add member</button></div></>}
       {view === 'edit' && <div className="group-edit"><div className="avatar edit-avatar">D</div><label>Group name<input value={title} onChange={event => setTitle(event.target.value)} /></label><label>Description<textarea value={description} onChange={event => setDescription(event.target.value)} /></label><button><span><strong>Group type</strong><small>Private group</small></span><ChevronRight size={18} /></button><button><span><strong>Chat history for new members</strong><small>Visible</small></span><ChevronRight size={18} /></button><button disabled><span><strong>Topics</strong><small>Coming later</small></span></button><button><span><strong>Reactions</strong><small>All reactions</small></span><ChevronRight size={18} /></button><button><span><strong>Permissions</strong><small>Default permissions</small></span><ChevronRight size={18} /></button><button><span><strong>Invite links</strong><small>1 active link</small></span><ChevronRight size={18} /></button><button><span><strong>Administrators</strong><small>2</small></span><ChevronRight size={18} /></button><button><span><strong>Members</strong><small>{group?.member_count || 3}</small></span><ChevronRight size={18} /></button><button onClick={() => setView('link')}><span><strong>Link existing chat</strong><small>{group?.primary_chat_id ? 'Primary chat linked' : 'Choose from your chats'}</small></span><ChevronRight size={18} /></button><button onClick={() => void fetch(`${API_URL}/groups`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ title: `${title} chat`, description, createChat: true }) })}><span><strong>Create new chat</strong><small>Create a cloud chat for this group</small></span><MessageCircle size={18} /></button></div>}
       {view === 'link' && <div className="group-link"><label><Search size={16} /><input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder="Search chats" /></label>{chats.filter(chat => chat.name.toLowerCase().includes(search.toLowerCase())).map(chat => <button key={chat.id} onClick={() => void link(chat.id)}><span className="avatar">{chat.name[0]}</span><span><strong>{chat.name}</strong><small>{chat.id === group?.primary_chat_id ? 'Currently linked' : 'Cloud chat'}</small></span><ChevronRight size={18} /></button>)}</div>}
+      {view === 'invite' && <div className="group-link invite-group"><button onClick={() => void createInvite()}><Copy size={18} /><span><strong>Invite link</strong><small>{inviteUrl ? 'Link ready to copy' : 'Create a private link for this group'}</small></span></button>{inviteUrl && <button className="invite-link" onClick={() => { void navigator.clipboard.writeText(inviteUrl); setInviteNotice('Invite link copied') }}><span>{inviteUrl}</span><Copy size={16} /></button>}{people.map(person => <button key={person.id} onClick={() => void addMember(person)}><span className="avatar" style={{ background: person.color }}>{person.initials}</span><span><strong>{person.name}</strong><small>{person.username}</small></span><UserRound size={17} /></button>)}{inviteNotice && <p className="invite-notice">{inviteNotice}</p>}</div>}
     </aside>
   </div>
 }

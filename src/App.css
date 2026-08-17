@@ -520,7 +520,44 @@ button:active:not(:disabled) { transform:scale(.98); } button:disabled { cursor:
   to { opacity: 1; transform: translateY(0); }
 }
 
-.inbox-empty { position:absolute; inset:74px 0 0; z-index:1; display:grid; place-content:center; justify-items:center; align-content:center; gap:10px; padding:28px; text-align:center; background:var(--bg); }
-.inbox-empty-icon { width:58px; height:58px; display:grid; place-items:center; border-radius:18px; color:var(--brand); background:var(--brand-soft); }
-.inbox-empty h2 { margin:8px 0 0; font-size:21px; letter-spacing:-.5px; }.inbox-empty p { max-width:330px; margin:0; color:var(--muted); font-size:13px; line-height:1.55; }.inbox-empty > div { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin-top:10px; }.inbox-empty button { min-height:40px; padding:0 13px; border:1px solid var(--line); border-radius:10px; color:var(--ink); background:var(--surface); font-size:12px; font-weight:750; }.inbox-empty .empty-primary { border-color:var(--brand); color:var(--brand-ink); background:var(--brand); }
+.wordmark { gap:9px; letter-spacing:-.55px; }
+.wordmark span { color:var(--ink); }
+.side-top { min-height:76px; padding:18px 18px 12px; }
+.sidebar .icon-btn { border:1px solid transparent; }
+.sidebar .icon-btn:hover { border-color:var(--line); }
+.chat-list-empty { display:grid; justify-items:center; gap:8px; margin:18px 14px; padding:20px 14px; border:1px dashed var(--line); border-radius:var(--radius); color:var(--muted); text-align:center; }
+.chat-list-empty-icon { display:grid; place-items:center; width:36px; height:36px; border-radius:12px; color:var(--brand); background:var(--brand-soft); }
+.chat-list-empty strong { color:var(--ink); font-size:12px; }
+.chat-list-empty span { max-width:190px; font-size:11px; line-height:1.45; }
+.chat-list-empty button { min-height:34px; margin-top:3px; padding:0 11px; border:0; border-radius:9px; color:var(--brand-ink); background:var(--brand); font-size:11px; font-weight:800; }
+.header-action { width:36px; height:36px; border:1px solid var(--line); background:var(--surface-2); font-size:11px; font-weight:800; }
+.header-action:hover { border-color:color-mix(in srgb,var(--brand) 35%,var(--line)); background:var(--brand-soft); }
+.inbox-empty { flex:1; display:grid; place-content:center; justify-items:center; align-content:center; gap:12px; min-height:0; padding:40px 28px; text-align:center; background:var(--bg); }
+.inbox-empty-icon { width:82px; height:82px; display:grid; place-items:center; border:1px solid color-mix(in srgb,var(--brand) 22%,var(--line)); border-radius:26px; color:var(--brand); background:var(--brand-soft); }
+.inbox-empty h2 { margin:8px 0 0; font-size:28px; line-height:1.2; letter-spacing:-.8px; }
+.inbox-empty p { max-width:390px; margin:0; color:var(--muted); font-size:14px; line-height:1.55; }
+.inbox-empty > div { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin-top:10px; }
+.inbox-empty button { min-height:42px; padding:0 15px; border:1px solid var(--line); border-radius:10px; color:var(--ink); background:var(--surface); font-size:12px; font-weight:800; }
+.inbox-empty button:hover { border-color:color-mix(in srgb,var(--brand) 35%,var(--line)); color:var(--brand); background:var(--brand-soft); }
+.inbox-empty .empty-primary { border-color:var(--brand); color:var(--brand-ink); background:var(--brand); }
+.inbox-empty .empty-primary:hover { color:var(--brand-ink); background:color-mix(in srgb,var(--brand) 88%,black); }
+@media (max-width:760px) {
+  .app-shell.inbox-empty-state { display:block; }
+  .inbox-empty-state .sidebar { display:flex; height:100dvh; }
+  .inbox-empty-state .chat { display:none; }
+  .inbox-empty-state .side-top { padding-top:18px; }
+  .inbox-empty-state .chat-list-empty { margin-top:24px; padding:26px 18px; }
+}
+.invite-controls { border-top:1px solid var(--line); }
+.invite-people { padding:7px; border-top:1px solid var(--line); }
+.invite-people > button, .invite-group > button { width:100%; display:grid; grid-template-columns:40px 1fr auto; gap:10px; align-items:center; padding:9px 11px; border:0; border-radius:9px; color:var(--ink); background:transparent; text-align:left; }
+.invite-people > button:hover, .invite-group > button:hover { background:var(--surface-2); }
+.invite-people .avatar { width:36px; height:36px; }
+.invite-people strong, .invite-people small { display:block; }
+.invite-people strong { font-size:12px; }
+.invite-people small { margin-top:2px; color:var(--muted); font-size:10px; }
+.invite-people svg { color:var(--brand); }
+.invite-link { width:calc(100% - 28px); min-height:38px; display:flex; align-items:center; justify-content:space-between; gap:8px; margin:8px 14px; padding:0 10px; overflow:hidden; border:1px solid var(--line); border-radius:9px; color:var(--brand); background:var(--brand-soft); font-size:11px; text-align:left; }
+.invite-link span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.invite-notice { margin:5px 14px 12px; color:var(--muted); font-size:10px; }
 .contacts-overlay { position:fixed; z-index:95; inset:0; display:grid; place-items:center; padding:18px; background:rgb(0 0 0 / 40%); }.contacts-panel { width:min(390px, 100%); border:1px solid var(--line); border-radius:17px; overflow:hidden; color:var(--ink); background:var(--surface); box-shadow:0 22px 60px rgb(0 0 0 / 24%); }.contacts-panel header { display:flex; align-items:center; justify-content:space-between; min-height:58px; padding:0 17px; border-bottom:1px solid var(--line); }.contacts-panel header strong { font-size:15px; }.contacts-panel header button { border:0; color:var(--muted); background:transparent; display:grid; place-items:center; }.contacts-panel > p { margin:0; padding:15px 17px 7px; color:var(--muted); font-size:12px; }.contacts-panel > div { padding:7px; }.contacts-panel > div > button { width:100%; display:grid; grid-template-columns:42px 1fr auto; gap:11px; align-items:center; padding:10px; border:0; border-radius:11px; color:var(--ink); background:transparent; text-align:left; }.contacts-panel > div > button:hover { background:var(--surface-2); }.contacts-panel .avatar { width:40px; height:40px; }.contacts-panel strong,.contacts-panel small { display:block; }.contacts-panel > div strong { font-size:13px; }.contacts-panel > div small { margin-top:3px; color:var(--muted); font-size:11px; }.contacts-panel > div svg { color:var(--brand); }.group-create { display:grid; gap:13px; padding-bottom:17px; }.group-create header { margin-bottom:1px; }.group-create label { display:grid; gap:6px; padding:0 17px; color:var(--muted); font-size:11px; font-weight:700; }.group-create label span { font-weight:400; }.group-create input,.group-create textarea { width:100%; border:1px solid var(--line); border-radius:10px; padding:10px; color:var(--ink); background:var(--surface-2); font:inherit; font-size:13px; }.group-create textarea { min-height:76px; resize:vertical; }.group-create .channel-primary { width:calc(100% - 34px); margin:2px 17px 0; }.group-create .form-notice { margin:0 17px; }

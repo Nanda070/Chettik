@@ -6,6 +6,9 @@ A local-first messenger with email OTP, direct conversations, groups, channels, 
 
 ```powershell
 Copy-Item .env.example .env
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r backend\requirements.txt
 npm install
 npm run dev
 ```
@@ -14,6 +17,9 @@ npm run dev
 
 - Client: http://127.0.0.1:5173
 - API: http://127.0.0.1:8787
+
+The API is FastAPI (`backend/main.py`) with SQLite. The former Express implementation
+in `server/index.ts` is retained only as a historical reference and is no longer run.
 
 The database is `chettik.db`. Startup removes legacy showcase conversations and preserves only the three email-login accounts plus each account's empty Saved Messages chat.
 

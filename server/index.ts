@@ -29,6 +29,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS chat_pins (chat_id TEXT NOT NULL, message_id TEXT NOT NULL, pinned_by TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (chat_id, message_id));
   CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', username TEXT UNIQUE, visibility TEXT NOT NULL DEFAULT 'private', owner_id TEXT NOT NULL, chat_id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS channel_members (channel_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'subscriber', joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (channel_id, user_id));
+  CREATE TABLE IF NOT EXISTS invite_links (id TEXT PRIMARY KEY, target_type TEXT NOT NULL CHECK(target_type IN ('group', 'channel')), target_id TEXT NOT NULL, code TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 `)
 const userColumns = db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>
 if (userColumns.some(column => column.name === 'phone')) {
@@ -71,6 +72,7 @@ const users = [
   ['nanda', 'Nanda', '@nanda', 'SuperAdmin', 'test@test.com', 'N', '#9e2338'],
   ['mark', 'Mark', '@mark', 'Admin', 'test2@test.com', 'M', '#6e4c97'],
   ['alisher', 'Alisher', '@alisher', 'User', 'test3@test.com', 'A', '#bf8057'],
+  ['dina', 'Dina', '@dina', 'User', 'test4@test.com', 'D', '#4c8a83'],
 ]
 const insertUser = db.prepare('INSERT OR IGNORE INTO users (id, name, username, role, email, initials, color) VALUES (?, ?, ?, ?, ?, ?, ?)')
 const insertPrivacy = db.prepare('INSERT OR IGNORE INTO privacy_settings (user_id) VALUES (?)')
@@ -300,6 +302,15 @@ app.post('/api/groups/:groupId/members', (request, response) => {
   if (group?.primary_chat_id) db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)').run(group.primary_chat_id, userId)
   response.status(201).json({ ok: true })
 })
+app.post('/api/groups/:groupId/invite-link', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const allowed = db.prepare("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ? AND role IN ('owner', 'admin')").get(request.params.groupId, user.id)
+  if (!allowed) return response.status(403).json({ error: 'Only group administrators can manage invite links' })
+  const existing = db.prepare("SELECT code FROM invite_links WHERE target_type = 'group' AND target_id = ? ORDER BY created_at DESC LIMIT 1").get(request.params.groupId) as { code: string } | undefined
+  const code = existing?.code || randomUUID().replace(/-/g, '').slice(0, 16)
+  if (!existing) db.prepare("INSERT INTO invite_links (id, target_type, target_id, code, created_by) VALUES (?, 'group', ?, ?, ?)").run(randomUUID(), request.params.groupId, code, user.id)
+  response.json({ code, url: `${request.protocol}://${request.get('host')}/join/${code}` })
+})
 app.get('/api/channels', (request, response) => {
   const user = requireSession(request, response); if (!user) return
   response.json(db.prepare(`
@@ -342,6 +353,41 @@ app.post('/api/channels/:channelId/subscribe', (request, response) => {
   db.prepare('INSERT OR IGNORE INTO channel_members (channel_id, user_id) VALUES (?, ?)').run(request.params.channelId, user.id)
   db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)').run(channel.chat_id, user.id)
   response.status(201).json({ ok: true })
+})
+app.post('/api/channels/:channelId/members', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const { userId } = request.body as { userId?: string }
+  const channel = db.prepare("SELECT chat_id FROM channels c JOIN channel_members cm ON cm.channel_id = c.id WHERE c.id = ? AND cm.user_id = ? AND cm.role IN ('owner', 'admin')").get(request.params.channelId, user.id) as { chat_id: string } | undefined
+  if (!channel || !userId || !db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId)) return response.status(403).json({ error: 'Only channel administrators can add subscribers' })
+  db.prepare('INSERT OR IGNORE INTO channel_members (channel_id, user_id) VALUES (?, ?)').run(request.params.channelId, userId)
+  db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)').run(channel.chat_id, userId)
+  response.status(201).json({ ok: true })
+})
+app.post('/api/channels/:channelId/invite-link', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const allowed = db.prepare("SELECT 1 FROM channel_members WHERE channel_id = ? AND user_id = ? AND role IN ('owner', 'admin')").get(request.params.channelId, user.id)
+  if (!allowed) return response.status(403).json({ error: 'Only channel administrators can manage invite links' })
+  const existing = db.prepare("SELECT code FROM invite_links WHERE target_type = 'channel' AND target_id = ? ORDER BY created_at DESC LIMIT 1").get(request.params.channelId) as { code: string } | undefined
+  const code = existing?.code || randomUUID().replace(/-/g, '').slice(0, 16)
+  if (!existing) db.prepare("INSERT INTO invite_links (id, target_type, target_id, code, created_by) VALUES (?, 'channel', ?, ?, ?)").run(randomUUID(), request.params.channelId, code, user.id)
+  response.json({ code, url: `${request.protocol}://${request.get('host')}/join/${code}` })
+})
+app.post('/api/invites/:code/join', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const invite = db.prepare('SELECT * FROM invite_links WHERE code = ?').get(request.params.code) as { target_type: 'group' | 'channel'; target_id: string } | undefined
+  if (!invite) return response.status(404).json({ error: 'Invite link not found' })
+  if (invite.target_type === 'group') {
+    const group = db.prepare('SELECT primary_chat_id FROM groups WHERE id = ?').get(invite.target_id) as { primary_chat_id: string | null } | undefined
+    if (!group) return response.status(404).json({ error: 'Group not found' })
+    db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)').run(invite.target_id, user.id)
+    if (group.primary_chat_id) db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)').run(group.primary_chat_id, user.id)
+  } else {
+    const channel = db.prepare('SELECT chat_id FROM channels WHERE id = ?').get(invite.target_id) as { chat_id: string } | undefined
+    if (!channel) return response.status(404).json({ error: 'Channel not found' })
+    db.prepare('INSERT OR IGNORE INTO channel_members (channel_id, user_id) VALUES (?, ?)').run(invite.target_id, user.id)
+    db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)').run(channel.chat_id, user.id)
+  }
+  response.status(201).json({ ok: true, targetType: invite.target_type, targetId: invite.target_id })
 })
 app.get('/api/me/profile', (request, response) => {
   const user = requireSession(request, response); if (!user) return
