@@ -1,10 +1,10 @@
-import { BellRing, Check, ChevronRight, EyeOff, MapPin, Mic, Radio, ShieldCheck, SlidersHorizontal, X } from 'lucide-react'
-import { useState } from 'react'
+import { BellRing, Camera, Check, ChevronRight, EyeOff, MapPin, Mic, ShieldCheck, SlidersHorizontal, X } from 'lucide-react'
+import { useRef, useState } from 'react'
 
 type Props = {
   language: 'EN' | 'RU'
   onClose: () => void
-  onSend: (kind: 'poll' | 'location' | 'circle') => void
+  onSend: (kind: 'poll' | 'location') => void
 }
 
 export function RichComposerSheet({ language, onClose, onSend }: Props) {
@@ -12,8 +12,8 @@ export function RichComposerSheet({ language, onClose, onSend }: Props) {
   const [poll, setPoll] = useState(['Team sync at 15:00?', 'Yes, works for me', 'Need another time'])
   const [view, setView] = useState<'actions' | 'poll' | 'location'>('actions')
   const labels = ru
-    ? { title: 'Вложения', poll: 'Опрос', location: 'Геопозиция', circle: 'Видеосообщение', create: 'Создать опрос', cancel: 'Отмена', share: 'Отправить геопозицию', question: 'Вопрос', option: 'Вариант' }
-    : { title: 'Share securely', poll: 'Poll', location: 'Location', circle: 'Video circle', create: 'Create poll', cancel: 'Cancel', share: 'Share location', question: 'Question', option: 'Option' }
+    ? { title: 'Вложения', poll: 'Опрос', location: 'Геопозиция', create: 'Создать опрос', cancel: 'Отмена', share: 'Отправить геопозицию', question: 'Вопрос', option: 'Вариант' }
+    : { title: 'Share securely', poll: 'Poll', location: 'Location', create: 'Create poll', cancel: 'Cancel', share: 'Share location', question: 'Question', option: 'Option' }
   if (view === 'poll') return <div className="rich-sheet" role="dialog" aria-modal="true" aria-label={labels.poll}>
     <SheetHead title={labels.poll} onClose={onClose} />
     <div className="rich-form">
@@ -32,7 +32,6 @@ export function RichComposerSheet({ language, onClose, onSend }: Props) {
     <div className="rich-actions">
       <button onClick={() => setView('poll')}><span className="rich-icon poll"><SlidersHorizontal size={21} /></span><span><strong>{labels.poll}</strong><small>{ru ? 'Соберите решение без шума' : 'Decide together, quietly'}</small></span><ChevronRight size={18} /></button>
       <button onClick={() => setView('location')}><span className="rich-icon location"><MapPin size={21} /></span><span><strong>{labels.location}</strong><small>{ru ? 'Поделитесь только в чате' : 'Share only with this chat'}</small></span><ChevronRight size={18} /></button>
-      <button onClick={() => { onSend('circle'); onClose() }}><span className="rich-icon circle"><Radio size={21} /></span><span><strong>{labels.circle}</strong><small>{ru ? 'Короткое личное видео' : 'A short, personal video'}</small></span><ChevronRight size={18} /></button>
     </div>
   </div>
 }
@@ -56,6 +55,18 @@ export function DeliveryPanel({ language, enabled, telemetry, onChange, onClose 
   </div>
 }
 
-export function VoiceButton({ active, onToggle, label }: { active: boolean; onToggle: () => void; label: string }) {
-  return <button className={`voice-button ${active ? 'recording' : ''}`} type="button" aria-label={label} title={label} onClick={onToggle}>{active ? <span className="record-dot" /> : <Mic size={19} />}</button>
+export function VoiceButton({ mode, active, onModeToggle, onStart, onStop }: { mode: 'voice' | 'circle'; active: boolean; onModeToggle: () => void; onStart: () => void; onStop: () => void }) {
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const holding = useRef(false)
+  const label = active ? `Release to send ${mode === 'voice' ? 'voice message' : 'video circle'}` : mode === 'voice' ? 'Voice mode — hold to record, tap for circle mode' : 'Circle mode — hold to record, tap for voice mode'
+  const start = () => {
+    holding.current = false
+    holdTimer.current = setTimeout(() => { holding.current = true; onStart() }, 180)
+  }
+  const stop = () => {
+    if (holdTimer.current) clearTimeout(holdTimer.current)
+    holdTimer.current = null
+    if (holding.current) { holding.current = false; onStop() } else onModeToggle()
+  }
+  return <button className={`voice-button ${active ? 'recording' : ''} ${mode}`} type="button" aria-label={label} title={label} onPointerDown={start} onPointerUp={stop} onPointerCancel={stop} onPointerLeave={() => { if (active) stop() }}>{active ? <><span className="record-dot" /><small>REC</small></> : mode === 'voice' ? <Mic size={19} /> : <Camera size={19} />}</button>
 }

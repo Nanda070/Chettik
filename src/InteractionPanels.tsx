@@ -1,6 +1,6 @@
 import { Archive, BellOff, Check, ChevronRight, Clock3, Copy, Edit3, FileText, Forward, Lock, MessageCircle, MoreHorizontal, Pin, Search, Send, Share2, Trash2, UserRound, VolumeX, X } from 'lucide-react'
 import { useState } from 'react'
-import type { Account } from './Chettik'
+import type { Account, ChatName } from './Chettik'
 
 export type ConfirmAction = 'report' | 'block' | 'delete-message' | 'delete-chat' | 'clear-history'
 
@@ -28,14 +28,14 @@ export function ConfirmModal({ action, name, onClose, onConfirm }: { action: Con
   </div>
 }
 
-export function ProfilePanel({ account, onClose, onBlock }: { account: Account; onClose: () => void; onBlock: () => void }) {
+export function ProfilePanel({ account, phoneVisible, onClose, onBlock }: { account: Account; phoneVisible: boolean; onClose: () => void; onBlock: () => void }) {
   const [more, setMore] = useState(false)
   return <div className="profile-overlay" role="dialog" aria-modal="true" aria-label={`${account.name} profile`} onClick={onClose}>
     <aside className="profile-panel" onClick={event => event.stopPropagation()}><header><button aria-label="Close profile" onClick={onClose}><X size={20} /></button><button aria-label="More profile actions" onClick={() => setMore(value => !value)}><MoreHorizontal size={21} /></button>{more && <div className="profile-more-menu"><button>Share profile</button><button>Export chat</button><button>Clear history</button><button className="danger-item" onClick={onBlock}>Block user</button></div>}</header>
       <div className="profile-hero"><div className="avatar profile-photo" style={{ background: account.color }}>{account.initials}</div><h2>{account.name}</h2><span>{account.role === 'Admin' ? 'online · admin' : 'last seen recently'}</span></div>
       <div className="profile-nameplate"><strong>{account.username}</strong><BadgeStrip account={account} /></div>
       <div className="profile-actions"><button><MessageCircle size={19} /><small>Message</small></button><button><BellOff size={19} /><small>Mute</small></button><button><MoreHorizontal size={19} /><small>More</small></button></div>
-      <section className="profile-info"><p><UserRound size={18} /><span><strong>{account.username}</strong><small>Username</small></span></p><p><Lock size={18} /><span><strong>{account.phone.slice(0, 4)} ••• ••• {account.phone.slice(-3)}</strong><small>Phone number · visible to contacts</small></span></p><p><FileText size={18} /><span><strong>Building calm, private spaces.</strong><small>Bio</small></span></p><p><Clock3 size={18} /><span><strong>May 14</strong><small>Birthday</small></span></p></section>
+      <section className="profile-info"><p><UserRound size={18} /><span><strong>{account.username}</strong><small>Username</small></span></p>{phoneVisible && <p><Lock size={18} /><span><strong>{account.phone.slice(0, 4)} ••• ••• {account.phone.slice(-3)}</strong><small>Mobile</small></span></p>}<p><FileText size={18} /><span><strong>Building calm, private spaces.</strong><small>Bio</small></span></p><p><Clock3 size={18} /><span><strong>May 14</strong><small>Birthday</small></span></p></section>
       <section className="shared-stub"><strong>Shared media</strong><div><span>12<br /><small>Photos</small></span><span>4<br /><small>Files</small></span><span>2<br /><small>Links</small></span></div></section>
       <div className="profile-list"><button><Share2 size={18} />Share contact</button><button><Edit3 size={18} />Edit contact</button><button className="profile-danger" onClick={onBlock}><VolumeX size={18} />Block user</button></div>
     </aside>
@@ -55,8 +55,8 @@ export function MessageContextMenu({ mine, time, onAction }: { mine: boolean; ti
   return <div className="context-menu message-context" role="menu"><div className="reaction-bar">{['❤️', '👍', '🔥', '😂', '😮'].map(emoji => <button key={emoji} onClick={() => onAction(`react-${emoji}`)}>{emoji}</button>)}</div>{items.map(([action, label, icon]) => <button className={action === 'delete-message' ? 'danger-item' : ''} key={action as string} onClick={() => onAction(action as string)}>{icon}{label}</button>)}<footer><span>{time}</span><span>✓✓</span></footer></div>
 }
 
-export function ForwardPanel({ onClose, onForward }: { onClose: () => void; onForward: (target: string) => void }) {
+export function ForwardPanel({ onClose, onForward }: { onClose: () => void; onForward: (target: Exclude<ChatName, 'Mark'>) => void }) {
   return <div className="forward-overlay" role="dialog" aria-modal="true" aria-label="Forward to">
-    <div className="forward-card"><header><button aria-label="Close forward" onClick={onClose}><X size={20} /></button><strong>Forward to…</strong></header><label><Search size={16} /><input autoFocus placeholder="Search chats" /></label>{['Saved Messages', 'Design circle', 'Alisher'].map((chat, index) => <button className="forward-chat" key={chat} onClick={() => onForward(chat)}><span className="avatar" style={{ background: ['#9e2338', '#4c8a83', '#bf8057'][index] }}>{chat[0]}</span><span><strong>{chat}</strong><small>{index === 0 ? 'Keep it for yourself' : 'Private cloud chat'}</small></span><Send size={16} /></button>)}</div>
+    <div className="forward-card"><header><button aria-label="Close forward" onClick={onClose}><X size={20} /></button><strong>Forward to…</strong></header><label><Search size={16} /><input autoFocus placeholder="Search chats" /></label>{(['Saved Messages', 'Design circle', 'Alisher'] as const).map((chat, index) => <button className="forward-chat" key={chat} onClick={() => onForward(chat)}><span className="avatar" style={{ background: ['#9e2338', '#4c8a83', '#bf8057'][index] }}>{chat[0]}</span><span><strong>{chat}</strong><small>{index === 0 ? 'Keep it for yourself' : 'Private cloud chat'}</small></span><Send size={16} /></button>)}</div>
   </div>
 }

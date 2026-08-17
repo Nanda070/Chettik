@@ -73,11 +73,20 @@ test('mobile layout opens settings and emoji panel', async ({ page }, testInfo) 
   await expect(page.getByText('Privacy and Security', { exact: true })).toBeVisible()
 })
 
-test('rich messaging delivers voice, poll, location and circles', async ({ page }) => {
+test('rich messaging delivers held voice and circle recordings, polls and location', async ({ page }) => {
   await login(page)
-  await page.getByRole('button', { name: 'Record voice message' }).click()
-  await expect(page.getByRole('button', { name: 'Stop voice recording' })).toBeVisible()
-  await page.getByRole('button', { name: 'Stop voice recording' }).click()
+  const voiceButton = page.getByRole('button', { name: /Voice mode/ })
+  await voiceButton.click()
+  const circleButton = page.locator('.voice-button')
+  await circleButton.dispatchEvent('pointerdown')
+  await page.waitForTimeout(220)
+  await expect(page.getByRole('button', { name: /Release to send video circle/ })).toBeVisible()
+  await circleButton.dispatchEvent('pointerup')
+  await expect(page.getByText('A quiet moment from the studio')).toBeVisible()
+  await page.getByRole('button', { name: /Circle mode/ }).click()
+  await page.getByRole('button', { name: /Voice mode/ }).dispatchEvent('pointerdown')
+  await page.waitForTimeout(220)
+  await page.getByRole('button', { name: /Release to send voice message/ }).dispatchEvent('pointerup')
   await expect(page.getByText('0:08', { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: 'Open rich message tools' }).click()
@@ -92,8 +101,7 @@ test('rich messaging delivers voice, poll, location and circles', async ({ page 
   await expect(page.getByText('Moscow Avenue · precise location')).toBeVisible()
 
   await page.getByRole('button', { name: 'Open rich message tools' }).click()
-  await page.getByText('Video circle', { exact: true }).click()
-  await expect(page.getByText('A quiet moment from the studio')).toBeVisible()
+  await expect(page.getByText('Video circle', { exact: true })).toHaveCount(0)
 })
 
 test('stories and privacy-first delivery controls work', async ({ page }, testInfo) => {
@@ -115,14 +123,12 @@ test('stories and privacy-first delivery controls work', async ({ page }, testIn
   await page.getByRole('button', { name: 'Close story' }).click()
 })
 
-test('telegram main menu routes every Stage 4 entry', async ({ page }, testInfo) => {
+test('telegram main menu routes supported Stage 4 entries', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop menu only')
   await login(page)
   await page.getByRole('button', { name: 'Open main menu' }).click()
-  await expect(page.getByText('Chettik Web · v0.4')).toBeVisible()
-  await page.getByText('Wallet', { exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Wallet' })).toBeVisible()
-  await page.getByRole('button', { name: 'Back to main menu' }).click()
+  await expect(page.getByText('Chettik Web · v0.5')).toBeVisible()
+  await expect(page.getByText('Wallet', { exact: true })).toHaveCount(0)
   await page.getByText('New Group', { exact: true }).click()
   await expect(page.getByRole('heading', { name: 'New Group' })).toBeVisible()
   await page.getByRole('button', { name: 'Back to main menu' }).click()
@@ -130,6 +136,35 @@ test('telegram main menu routes every Stage 4 entry', async ({ page }, testInfo)
   await expect(page.locator('.app')).not.toHaveClass(/dark/)
   await page.locator('.main-menu').getByRole('button', { name: 'Settings', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible()
+})
+
+test('my profile and saved messages target the signed-in account', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop menu only')
+  await login(page, 'Nanda')
+  await page.getByRole('button', { name: 'Open main menu' }).click()
+  await page.getByRole('button', { name: 'My Profile', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Nanda profile' })).toBeVisible()
+  await page.getByRole('button', { name: 'Close profile' }).click()
+
+  await page.getByRole('button', { name: 'Open main menu' }).click()
+  await page.getByRole('button', { name: 'Saved Messages', exact: true }).click()
+  await expect(page.locator('.chat-row.active')).toContainText('Saved Messages')
+  await expect(page.getByText('Messages saved for yourself')).toBeVisible()
+  await expect(page.locator('.messages .message')).toContainText('Remember to write this down.')
+})
+
+test('phone privacy Nobody removes the Mobile row for viewers', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop profile treatment')
+  await page.goto('/')
+  await page.evaluate(() => {
+    const key = 'chettik-stage-2'
+    const data = JSON.parse(localStorage.getItem(key) || '{}')
+    data.profile = { ...data.profile, '+22222222222': { ...(data.profile?.['+22222222222'] || {}), privacy: { ...(data.profile?.['+22222222222']?.privacy || {}), phone: 'Nobody' } } }
+    localStorage.setItem(key, JSON.stringify(data))
+  })
+  await login(page, 'Nanda')
+  await page.getByRole('button', { name: 'Open Mark profile' }).first().click()
+  await expect(page.getByRole('dialog', { name: 'Mark profile' }).getByText('Mobile', { exact: true })).toHaveCount(0)
 })
 
 test('profile, confirmations and chat context actions are interactive', async ({ page }, testInfo) => {
@@ -156,4 +191,8 @@ test('profile, confirmations and chat context actions are interactive', async ({
   await page.getByRole('button', { name: 'Report message' }).first().click()
   await expect(page.getByRole('dialog', { name: 'Report message?' })).toBeVisible()
   await page.getByRole('dialog', { name: 'Report message?' }).getByRole('button', { name: 'Report', exact: true }).click()
+
+  await page.getByRole('button', { name: 'Open main menu' }).click()
+  await page.getByRole('button', { name: 'Saved Messages', exact: true }).click()
+  await expect(page.locator('.messages .message').filter({ hasText: 'I tried the new onboarding flow.' })).toBeVisible()
 })
