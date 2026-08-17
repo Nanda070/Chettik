@@ -50,6 +50,16 @@ test('Saved Messages opens and sends a self message', async ({ page }) => {
   await expect(page.locator('.messages')).toContainText(message)
 })
 
+test('opens a known user profile from a message mention', async ({ page, request }) => {
+  const person = await createSearchablePerson(request)
+  await login(page)
+  await openSavedMessages(page)
+  await page.getByRole('textbox', { name: 'Message text' }).fill(`Hello ${person.username}`)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await page.getByRole('button', { name: `Open ${person.username} profile`, exact: true }).click()
+  await expect(page.getByRole('dialog', { name: `${person.name} profile` })).toBeVisible()
+})
+
 test('searches a username and adds a contact', async ({ page, request }) => {
   const person = await createSearchablePerson(request)
   await login(page)
