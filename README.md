@@ -1,6 +1,6 @@
 # Chettik
 
-Privacy-first messenger with a dark-red identity, a Discord-like desktop shell, and a Telegram-like mobile shell. The UI still contains some local-first Stage 4/5 surfaces, while the real foundation now uses a Node API, SQLite persistence, OTP-session endpoint, and WebSocket message broadcasts.
+Privacy-first messenger with a dark-red identity and Telegram-inspired desktop/mobile shells. The foundation uses a Node API, SQLite persistence, email OTP sessions, broadcast channels, and WebSocket message broadcasts.
 
 ## Run locally
 
@@ -11,28 +11,24 @@ npm run dev
 
 This starts the API at `http://127.0.0.1:8787` and Vite at `http://127.0.0.1:5173`.
 
-## Demo login
+## Local sign-in
 
-Choose a seeded account, request a verification code, then enter `123456`. This code is intentionally available only through the development OTP provider.
+Enter a seeded email address, request a verification code, then enter the configured `OTP_DEV_CODE` (defaults to `123456`). In local development the email-provider boundary logs delivery server-side.
 
-| Role | Name | Phone | Username | Email |
-| --- | --- | --- | --- | --- |
-| SuperAdmin | Nanda | +11111111111 | @nanda | test@test.com |
-| Admin | Mark | +22222222222 | @mark | test2@test.com |
-| User | Alisher | +33333333333 | @alisher | test3@test.com |
-
-## Stage 2 demo notes
-
-The local demo persists messages, profile fields, privacy choices, blocks, and reports in browser `localStorage`, keyed by account. This is intentionally not a production server or real SMS integration. The requested delivery design is SMS first with a Telegram fallback; Stage 3 must replace the stub with audited server-side identity and device safety systems.
+| Role | Name | Username | Email |
+| --- | --- | --- | --- |
+| SuperAdmin | Nanda | @nanda | test@test.com |
+| Admin | Mark | @mark | test2@test.com |
+| User | Alisher | @alisher | test3@test.com |
 
 ## Real foundation
 
-- `server/index.ts` provides Express endpoints for health, OTP challenges, sessions, chat reads, and message writes.
+- `server/index.ts` provides Express endpoints for health, email OTP challenges, sessions, channels, chat reads, search, and message writes.
 - SQLite stores users, sessions, chats, memberships, messages, devices, and privacy settings. The local database is `chettik.db` and is intentionally gitignored.
 - The seeded Nanda, Mark, and Alisher accounts are inserted on API startup.
-- OTP requests are provider-bound, hashed before storage, expire after ten minutes, allow five verification attempts, and are rate-limited by phone and IP. Sessions expire after 30 days and are revoked on logout or device termination.
+- OTP requests are email-first, hashed before storage, expire after ten minutes, allow five verification attempts, and are rate-limited by email and IP. Sessions expire after 30 days and are revoked on logout or device termination.
 - The frontend obtains a session token after sign-in, reads the Nanda–Mark thread from the API, posts new messages there, and listens for `message.created` WebSocket broadcasts.
-- The development OTP provider logs delivery locally and uses `OTP_DEV_CODE` (default `123456`). Replace this provider with an audited SMS/Telegram provider before deployment.
+- The development email OTP provider logs delivery locally and uses `OTP_DEV_CODE` (default `123456`). Replace this provider with an audited transactional email provider before deployment.
 
 The generated product logo is at [public/logo.svg](public/logo.svg), used for the favicon, auth screen, and app header. Legal and credit documents are in [docs/legal](docs/legal); the product plan canvas is at [docs/plan/dev-hq-product-ideas.canvas.tsx](docs/plan/dev-hq-product-ideas.canvas.tsx).
 

@@ -34,7 +34,7 @@ export function ConfirmModal({ action, name, onClose, onConfirm }: { action: Con
   </div>
 }
 
-export function ProfilePanel({ account, phoneVisible, onClose, onBlock, onStartSecret }: { account: Account; phoneVisible: boolean; onClose: () => void; onBlock: () => void; onStartSecret: () => void }) {
+export function ProfilePanel({ account, onClose, onBlock, onStartSecret }: { account: Account; onClose: () => void; onBlock: () => void; onStartSecret: () => void }) {
   const [more, setMore] = useState(false)
   const [gallery, setGallery] = useState<'photos' | 'files' | 'links' | null>(null)
   if (gallery) return <SharedGallery kind={gallery} onBack={() => setGallery(null)} onClose={onClose} />
@@ -43,7 +43,7 @@ export function ProfilePanel({ account, phoneVisible, onClose, onBlock, onStartS
       <div className="profile-hero"><div className="avatar profile-photo" style={{ background: account.color }}>{account.initials}</div><h2>{account.name}</h2><span>{account.role === 'Admin' ? 'online · admin' : 'last seen recently'}</span></div>
       <div className="profile-nameplate"><strong>{account.username}</strong><BadgeStrip account={account} /></div>
       <div className="profile-actions"><button><MessageCircle size={19} /><small>Message</small></button><button><BellOff size={19} /><small>Mute</small></button><button><MoreHorizontal size={19} /><small>More</small></button></div>
-      <section className="profile-info"><p><UserRound size={18} /><span><strong>{account.username}</strong><small>Username</small></span></p>{phoneVisible && <p><Lock size={18} /><span><strong>{account.phone.slice(0, 4)} ••• ••• {account.phone.slice(-3)}</strong><small>Mobile</small></span></p>}<p><FileText size={18} /><span><strong>Building calm, private spaces.</strong><small>Bio</small></span></p><p><Clock3 size={18} /><span><strong>May 14</strong><small>Birthday</small></span></p></section>
+      <section className="profile-info"><p><UserRound size={18} /><span><strong>{account.username}</strong><small>Username</small></span></p><p><FileText size={18} /><span><strong>Building calm, private spaces.</strong><small>Bio</small></span></p><p><Clock3 size={18} /><span><strong>May 14</strong><small>Birthday</small></span></p></section>
       <section className="shared-stub"><strong>Shared media</strong><div><button onClick={() => setGallery('photos')}><b>12</b><small>Photos</small></button><button onClick={() => setGallery('files')}><b>4</b><small>Files</small></button><button onClick={() => setGallery('links')}><b>2</b><small>Links</small></button></div></section>
       <div className="profile-list"><button><Share2 size={18} />Share contact</button><button><Edit3 size={18} />Edit contact</button><button onClick={onStartSecret}><Lock size={18} />Start secret chat</button><button className="profile-danger" onClick={onBlock}><VolumeX size={18} />Block user</button></div>
     </aside>
