@@ -1,15 +1,20 @@
 # Chettik Authors & Credits
 
-## Product authorship
-
-**Chettik** is the placeholder product author and operator for this early project.
-
 ## Authors and contributors
 
-Product authors: **TBD**  
-Contributors: **TBD**
+**Developer & founder:** Nanda
+Discord: `nandak070` · Telegram: `nanda070`
 
-This section will name approved contributors, their roles, and attribution details once the product team is established.
+**Developer:** Mark
+Discord: `schizophrenogenic`
+
+## Contact
+
+**Nanda**
+Email: adnan.huseynli1@gmail.com
+Phone: +41-77-259-9608
+Discord: `nandak070`
+Telegram: `nanda070`
 
 ## Third-party software
 
@@ -26,4 +31,16 @@ License notices and final attributions must be published before public launch.
 
 ## Авторы и благодарности
 
-Chettik указан как автор и оператор продукта-заглушки. Авторы и участники: **TBD**. Перед публичным запуском сюда будут добавлены подтверждённые участники, роли и уведомления о лицензиях сторонних компонентов.
+**Разработчик и основатель:** Nanda
+Discord: `nandak070` · Telegram: `nanda070`
+
+**Разработчик:** Mark
+Discord: `schizophrenogenic`
+
+## Связь
+
+**Nanda**
+Email: adnan.huseynli1@gmail.com
+Телефон: +41-77-259-9608
+Discord: `nandak070`
+Telegram: `nanda070`

@@ -13,13 +13,15 @@ Chettik is a privacy-first messenger: Telegram-like messaging on phone and a Dis
 
 Approval gate: review the local demo and Stage 1 scope before any Stage 2 work begins.
 
-## Stage 2 — Identity, cloud messaging and moderation
+## Stage 2 — Identity, cloud messaging and moderation (Complete — local demo)
 
-1. Phone OTP service with SMS first and Telegram delivery fallback.
-2. Server-backed accounts, sessions, profile, contacts, Saved Messages and cloud chats.
-3. Messaging primitives: reply, forward, edit, pin, reactions, search, media, any files and photo-as-file.
-4. Block/report/delete-for-both and internal Chettik operations console.
+1. Phone OTP flow with an explicit local SMS stub and a documented Telegram-fallback product path.
+2. Local persistent accounts, sessions, profiles and cloud-chat demonstration data using browser storage.
+3. Messaging primitives: reply, edit, reactions, search, report/delete actions, plus file/media UI entry points.
+4. Block/report controls and a role-gated internal Chettik operations console foundation.
 5. Profile badges, presence and optional Discord/GitHub profile links.
+
+Approval gate: test the local Stage 2 demo and its persistence/moderation flows before any Stage 3 privacy or device-security work begins.
 
 ## Stage 3 — Privacy, devices and account safety
 

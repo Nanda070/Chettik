@@ -1,6 +1,6 @@
 # Chettik
 
-Privacy-first messenger web foundation. The interface uses a dark-red identity, a Discord-like desktop shell, and a Telegram-like mobile shell. Stage 1 is a front-end demonstration with no real authentication or backend.
+Privacy-first messenger prototype with a dark-red identity, a Discord-like desktop shell, and a Telegram-like mobile shell. Stage 2 adds an OTP delivery stub, persistent local cloud-chat data, profiles/privacy controls, message moderation actions, and a role-gated operations-console foundation.
 
 ## Run locally
 
@@ -13,7 +13,7 @@ Open the URL printed by Vite (normally `http://localhost:5173`).
 
 ## Demo login
 
-Choose a seeded account, then enter any 4+ digits for the OTP mock:
+Choose a seeded account, then enter any 4+ digits for the local OTP stub:
 
 | Role | Name | Phone | Username | Email |
 | --- | --- | --- | --- | --- |
@@ -21,11 +21,18 @@ Choose a seeded account, then enter any 4+ digits for the OTP mock:
 | Admin | Mark | +22222222222 | @mark | test2@test.com |
 | User | Alisher | +33333333333 | @alisher | test3@test.com |
 
-## Stage 1 status
+## Stage 2 demo notes
 
-All four Stage 1 fields are implemented: foundation, mock auth and seed data, responsive chat shell, and legal/settings foundations. See [ROADMAP.md](ROADMAP.md) for approval gates and later stages.
+The local demo persists messages, profile fields, privacy choices, blocks, and reports in browser `localStorage`, keyed by account. This is intentionally not a production server or real SMS integration. The requested delivery design is SMS first with a Telegram fallback; Stage 3 must replace the stub with audited server-side identity and device safety systems.
 
-Legal placeholders are available in-app from the login screen and in [docs/legal](docs/legal). The versioned product plan canvas is stored at [docs/plan/dev-hq-product-ideas.canvas.tsx](docs/plan/dev-hq-product-ideas.canvas.tsx).
+The generated product logo is at [public/logo.svg](public/logo.svg), used for the favicon, auth screen, and app header. Legal and credit documents are in [docs/legal](docs/legal); the product plan canvas is at [docs/plan/dev-hq-product-ideas.canvas.tsx](docs/plan/dev-hq-product-ideas.canvas.tsx).
+
+## Credits
+
+**Developer & founder:** Nanda — Discord `nandak070`, Telegram `nanda070`
+**Developer:** Mark — Discord `schizophrenogenic`
+
+**Contact / Связь:** Nanda · adnan.huseynli1@gmail.com · +41-77-259-9608 · Discord `nandak070` · Telegram `nanda070`
 
 ## Verify
 
