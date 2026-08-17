@@ -1,3 +1,18 @@
+.media-send-sheet { max-width: 420px; }
+.media-preview { display: grid; place-items: center; gap: 8px; min-height: 150px; margin: 16px; border-radius: 18px; background: linear-gradient(135deg, #541422, #24131a); color: #fff; }
+.media-preview small, .media-expiry-note { opacity: .72; }
+.media-caption { display: flex; gap: 8px; padding: 0 16px; }
+.media-caption input { flex: 1; min-width: 0; border: 1px solid #ffffff24; border-radius: 12px; padding: 12px; background: transparent; color: inherit; }
+.media-caption button { position: relative; border: 0; border-radius: 12px; padding: 0 12px; background: #9e2338; color: #fff; }
+.media-caption b { position: absolute; right: 5px; top: 3px; font-size: 10px; }
+.media-expiry-picker { margin: 12px 16px; border-radius: 14px; overflow: hidden; background: #ffffff0b; }
+.media-expiry-picker button { display: grid; grid-template-columns: 38px 1fr 20px; align-items: center; width: 100%; padding: 11px; border: 0; border-bottom: 1px solid #ffffff0d; background: transparent; color: inherit; text-align: left; }
+.media-expiry-picker button.active { background: #9e233833; color: #ffb5c0; }
+.media-expiry-picker button span { font-weight: 700; }
+.media-expiry-note { display: flex; gap: 7px; margin: 12px 16px; font-size: 12px; }
+.timed-media { display: grid; gap: 4px; min-width: 190px; border: 0; border-radius: 14px; padding: 14px; background: linear-gradient(135deg, #9e2338, #541422); color: #fff; text-align: left; }
+.timed-media > span { font-size: 30px; }
+.timed-media small { opacity: .8; }
 .form-notice { margin: 10px 0 0; color: #bd5060; font-size: 11px; line-height: 1.45; }
 .compose { transition: border-color .2s, box-shadow .2s; flex-wrap: wrap; }
 .compose.editing { border-color: var(--brand); box-shadow: 0 -4px 18px color-mix(in srgb, var(--brand) 14%, transparent); }

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 import path from 'node:path'
 import Database from 'better-sqlite3'
@@ -8,17 +8,28 @@ import { WebSocketServer } from 'ws'
 const db = new Database(path.resolve('chettik.db'))
 db.pragma('journal_mode = WAL')
 db.exec(`
-  CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, username TEXT NOT NULL UNIQUE, phone TEXT NOT NULL UNIQUE, role TEXT NOT NULL, email TEXT NOT NULL, initials TEXT NOT NULL, color TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, username TEXT NOT NULL UNIQUE, phone TEXT NOT NULL UNIQUE, role TEXT NOT NULL, email TEXT NOT NULL, initials TEXT NOT NULL, color TEXT NOT NULL, badges_json TEXT NOT NULL DEFAULT '[]');
+  CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT, revoked_at TEXT);
+  CREATE TABLE IF NOT EXISTS otp_challenges (id TEXT PRIMARY KEY, phone TEXT NOT NULL, code_hash TEXT NOT NULL, expires_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, consumed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, title TEXT NOT NULL, type TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS chat_members (chat_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (chat_id, user_id));
-  CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, sender_id TEXT NOT NULL, text TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, sender_id TEXT NOT NULL, text TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text', metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, label TEXT NOT NULL, last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, bio TEXT NOT NULL DEFAULT '', github TEXT NOT NULL DEFAULT '', discord TEXT NOT NULL DEFAULT '', privacy_json TEXT NOT NULL DEFAULT '{}');
   CREATE TABLE IF NOT EXISTS privacy_settings (user_id TEXT PRIMARY KEY, phone TEXT NOT NULL DEFAULT 'Contacts', last_seen TEXT NOT NULL DEFAULT 'Contacts');
   CREATE TABLE IF NOT EXISTS blocked_users (user_id TEXT NOT NULL, blocked_user_id TEXT NOT NULL, PRIMARY KEY (user_id, blocked_user_id));
   CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, reporter_id TEXT NOT NULL, message_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 `)
+function addColumn(table: string, definition: string) {
+  const column = definition.split(' ')[0]
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+  if (!columns.some(item => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`)
+}
+addColumn('sessions', 'device_id TEXT')
+addColumn('sessions', 'expires_at TEXT')
+addColumn('sessions', 'revoked_at TEXT')
+addColumn('messages', "metadata_json TEXT NOT NULL DEFAULT '{}'")
+addColumn('users', "badges_json TEXT NOT NULL DEFAULT '[]'")
 const users = [
   ['nanda', 'Nanda', '@nanda', '+11111111111', 'SuperAdmin', 'test@test.com', 'N', '#9e2338'],
   ['mark', 'Mark', '@mark', '+22222222222', 'Admin', 'test2@test.com', 'M', '#6e4c97'],
@@ -29,6 +40,8 @@ const insertPrivacy = db.prepare('INSERT OR IGNORE INTO privacy_settings (user_i
 const insertProfile = db.prepare('INSERT OR IGNORE INTO profiles (user_id) VALUES (?)')
 const insertDevice = db.prepare('INSERT OR IGNORE INTO devices (id, user_id, label) VALUES (?, ?, ?)')
 for (const user of users) { insertUser.run(...user); insertPrivacy.run(user[0]); insertProfile.run(user[0]); insertDevice.run(`${user[0]}-local`, user[0], 'Windows • Chrome') }
+const seedBadges: Record<string, string[]> = { nanda: ['staff', 'early-supporter', 'official', 'crimson-circle'], mark: ['staff', 'early-supporter', 'ember-house'], alisher: ['early-supporter', 'aurora-house'] }
+for (const [id, badges] of Object.entries(seedBadges)) db.prepare('UPDATE users SET badges_json = ? WHERE id = ?').run(JSON.stringify(badges), id)
 db.prepare("UPDATE devices SET label = 'Windows • Chrome' WHERE id LIKE '%-local'").run()
 const seedChat = (id: string, title: string, type: string, members: string[]) => {
   db.prepare('INSERT OR IGNORE INTO chats (id, title, type) VALUES (?, ?, ?)').run(id, title, type)
@@ -49,6 +62,45 @@ seedMessage.run('seed-nanda-1', 'nanda-mark', 'nanda', 'That was the idea. Less 
 seedMessage.run('seed-saved-nanda-1', 'saved-nanda', 'nanda', 'Remember to write this down.', 'text')
 
 type SessionUser = { id: string; name: string; username: string; phone: string; role: string; email: string; initials: string; color: string }
+function publicUser(user: SessionUser & { badges_json?: string }) {
+  const { badges_json, ...fields } = user
+  return { ...fields, badges: JSON.parse(badges_json || '[]') as string[] }
+}
+type OtpProvider = {
+  deliver: (input: { phone: string; code: string; expiresAt: string }) => Promise<void>
+}
+const developmentOtpProvider: OtpProvider = {
+  async deliver({ phone, code, expiresAt }) {
+    console.info(`[otp:development] ${phone} code=${code} expires=${expiresAt}`)
+  },
+}
+const otpProvider = developmentOtpProvider
+const OTP_TTL_MS = 10 * 60 * 1000
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
+const OTP_MAX_ATTEMPTS = 5
+const OTP_PHONE_LIMIT = 30
+const OTP_IP_LIMIT = 120
+const OTP_RATE_WINDOW_MS = 15 * 60 * 1000
+const otpRequests = new Map<string, number[]>()
+function pruneRateLimit(key: string) {
+  const now = Date.now()
+  const requests = (otpRequests.get(key) || []).filter(time => now - time < OTP_RATE_WINDOW_MS)
+  otpRequests.set(key, requests)
+  return requests
+}
+function rateLimit(key: string, limit: number) {
+  const requests = pruneRateLimit(key)
+  if (requests.length >= limit) return false
+  requests.push(Date.now())
+  otpRequests.set(key, requests)
+  return true
+}
+function hashOtp(id: string, code: string) {
+  return scryptSync(code, id, 32).toString('hex')
+}
+function clientIp(request: express.Request) {
+  return request.ip || request.socket.remoteAddress || 'unknown'
+}
 const app = express()
 app.use(express.json())
 app.use((_, response, next) => { response.setHeader('Access-Control-Allow-Origin', 'http://127.0.0.1:5173'); response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS'); next() })
@@ -57,7 +109,7 @@ app.options('/api/{*path}', (_, response) => response.sendStatus(204))
 function session(request: express.Request): SessionUser | undefined {
   const token = request.header('authorization')?.replace('Bearer ', '')
   if (!token) return undefined
-  return db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(token) as SessionUser | undefined
+  return db.prepare("SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > datetime('now'))").get(token) as SessionUser | undefined
 }
 function requireSession(request: express.Request, response: express.Response): SessionUser | undefined {
   const user = session(request)
@@ -66,13 +118,44 @@ function requireSession(request: express.Request, response: express.Response): S
 }
 
 app.get('/api/health', (_, response) => response.json({ ok: true, storage: 'sqlite' }))
-app.post('/api/auth/otp', (request, response) => {
-  const { phone, code } = request.body as { phone?: string; code?: string }
+app.post('/api/auth/otp/request', async (request, response) => {
+  const phone = String((request.body as { phone?: string }).phone || '').replace(/\s/g, '')
+  if (!/^\+\d{10,15}$/.test(phone)) return response.status(400).json({ error: 'Enter a valid phone number' })
+  if (!rateLimit(`phone:${phone}`, OTP_PHONE_LIMIT) || !rateLimit(`ip:${clientIp(request)}`, OTP_IP_LIMIT)) return response.status(429).json({ error: 'Too many verification requests. Please try again later.' })
+  const id = randomUUID()
+  const code = process.env.OTP_DEV_CODE || '123456'
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS).toISOString()
+  db.prepare('INSERT INTO otp_challenges (id, phone, code_hash, expires_at) VALUES (?, ?, ?, ?)').run(id, phone, hashOtp(id, code), expiresAt)
+  await otpProvider.deliver({ phone, code, expiresAt })
+  response.status(201).json({ challengeId: id, expiresAt, delivery: 'development' })
+})
+app.post('/api/auth/otp/verify', (request, response) => {
+  const { phone: rawPhone, code, challengeId, deviceLabel } = request.body as { phone?: string; code?: string; challengeId?: string; deviceLabel?: string }
+  const phone = String(rawPhone || '').replace(/\s/g, '')
+  if (!challengeId || !code || !/^\d{6}$/.test(code)) return response.status(400).json({ error: 'Enter the six-digit verification code' })
+  const challenge = db.prepare('SELECT * FROM otp_challenges WHERE id = ? AND phone = ?').get(challengeId, phone) as { id: string; code_hash: string; expires_at: string; attempts: number; consumed_at: string | null } | undefined
+  if (!challenge || challenge.consumed_at || new Date(challenge.expires_at).getTime() <= Date.now()) return response.status(401).json({ error: 'This verification code has expired. Request a new one.' })
+  if (challenge.attempts >= OTP_MAX_ATTEMPTS) return response.status(429).json({ error: 'Too many invalid attempts. Request a new code.' })
+  const expected = Buffer.from(challenge.code_hash, 'hex')
+  const received = Buffer.from(hashOtp(challenge.id, code), 'hex')
+  if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+    db.prepare('UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = ?').run(challenge.id)
+    return response.status(401).json({ error: 'Incorrect verification code' })
+  }
+  db.prepare("UPDATE otp_challenges SET consumed_at = datetime('now') WHERE id = ?").run(challenge.id)
   const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) as SessionUser | undefined
-  if (!user || !code || !/^\d{4,6}$/.test(code)) return response.status(401).json({ error: 'Invalid local OTP' })
+  if (!user) return response.status(401).json({ error: 'This phone number is not registered' })
   const token = randomUUID()
-  db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run(token, user.id)
-  response.json({ token, user })
+  const deviceId = randomUUID()
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString()
+  db.prepare('INSERT INTO devices (id, user_id, label, last_seen) VALUES (?, ?, ?, ?)').run(deviceId, user.id, String(deviceLabel || 'Web • Browser').slice(0, 80), new Date().toISOString())
+  db.prepare('INSERT INTO sessions (token, user_id, device_id, expires_at) VALUES (?, ?, ?, ?)').run(token, user.id, deviceId, expiresAt)
+  response.json({ token, user: publicUser(user), expiresAt })
+})
+app.post('/api/auth/logout', (request, response) => {
+  const token = request.header('authorization')?.replace('Bearer ', '')
+  if (token) db.prepare("UPDATE sessions SET revoked_at = datetime('now') WHERE token = ?").run(token)
+  response.status(204).end()
 })
 app.get('/api/chats', (request, response) => {
   const user = requireSession(request, response); if (!user) return
@@ -88,7 +171,7 @@ app.get('/api/chats', (request, response) => {
 app.get('/api/me/profile', (request, response) => {
   const user = requireSession(request, response); if (!user) return
   const profile = db.prepare('SELECT * FROM profiles WHERE user_id = ?').get(user.id) as { bio: string; github: string; discord: string; privacy_json: string }
-  response.json({ ...user, bio: profile.bio, github: profile.github, discord: profile.discord, privacy: JSON.parse(profile.privacy_json) })
+  response.json({ ...publicUser(user), bio: profile.bio, github: profile.github, discord: profile.discord, privacy: JSON.parse(profile.privacy_json) })
 })
 app.patch('/api/me/profile', (request, response) => {
   const user = requireSession(request, response); if (!user) return
@@ -103,7 +186,7 @@ app.get('/api/users/:userId/profile', (request, response) => {
   if (!target) return response.status(404).json({ error: 'User not found' })
   const privacy = JSON.parse(target.privacy_json) as Record<string, string>
   const phoneVisible = target.id === viewer.id || privacy.phone !== 'Nobody'
-  response.json({ ...target, phone: phoneVisible ? target.phone : undefined, privacy })
+  response.json({ ...publicUser(target), phone: phoneVisible ? target.phone : undefined, privacy })
 })
 app.get('/api/me/devices', (request, response) => {
   const user = requireSession(request, response); if (!user) return
@@ -111,7 +194,15 @@ app.get('/api/me/devices', (request, response) => {
 })
 app.delete('/api/me/devices/:deviceId', (request, response) => {
   const user = requireSession(request, response); if (!user) return
-  db.prepare('DELETE FROM devices WHERE id = ? AND user_id = ?').run(request.params.deviceId, user.id)
+  const deleted = db.prepare('DELETE FROM devices WHERE id = ? AND user_id = ?').run(request.params.deviceId, user.id)
+  if (!deleted.changes) return response.status(404).json({ error: 'Device not found' })
+  db.prepare("UPDATE sessions SET revoked_at = datetime('now') WHERE device_id = ? AND user_id = ?").run(request.params.deviceId, user.id)
+  response.status(204).end()
+})
+app.post('/api/me/sessions/revoke-others', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const token = request.header('authorization')?.replace('Bearer ', '')
+  db.prepare("UPDATE sessions SET revoked_at = datetime('now') WHERE user_id = ? AND token != ? AND revoked_at IS NULL").run(user.id, token)
   response.status(204).end()
 })
 app.get('/api/chats/:chatId/messages', (request, response) => {
@@ -157,12 +248,12 @@ const wss = new WebSocketServer({ server: httpServer, path: '/api/ws' })
 function broadcast(payload: object) { const text = JSON.stringify(payload); for (const client of wss.clients) if (client.readyState === client.OPEN) client.send(text) }
 app.post('/api/chats/:chatId/messages', (request, response) => {
   const user = requireSession(request, response); if (!user) return
-  const { text, kind = 'text' } = request.body as { text?: string; kind?: string }
+  const { text, kind = 'text', metadata = {} } = request.body as { text?: string; kind?: string; metadata?: Record<string, unknown> }
   if (!text?.trim() || text.length > 4000) return response.status(400).json({ error: 'Message text must be 1–4000 characters' })
   const member = db.prepare('SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?').get(request.params.chatId, user.id)
   if (!member) return response.status(403).json({ error: 'Not a chat member' })
-  const message = { id: randomUUID(), chat_id: request.params.chatId, sender_id: user.id, text: text.trim(), kind, created_at: new Date().toISOString(), sender_name: user.name }
-  db.prepare('INSERT INTO messages (id, chat_id, sender_id, text, kind, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(message.id, message.chat_id, message.sender_id, message.text, message.kind, message.created_at)
+  const message = { id: randomUUID(), chat_id: request.params.chatId, sender_id: user.id, text: text.trim(), kind, metadata, created_at: new Date().toISOString(), sender_name: user.name }
+  db.prepare('INSERT INTO messages (id, chat_id, sender_id, text, kind, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(message.id, message.chat_id, message.sender_id, message.text, message.kind, JSON.stringify(metadata), message.created_at)
   broadcast({ type: 'message.created', message })
   response.status(201).json(message)
 })

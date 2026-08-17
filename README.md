@@ -13,7 +13,7 @@ This starts the API at `http://127.0.0.1:8787` and Vite at `http://127.0.0.1:517
 
 ## Demo login
 
-Choose a seeded account, then enter any 4+ digits for the local OTP stub:
+Choose a seeded account, request a verification code, then enter `123456`. This code is intentionally available only through the development OTP provider.
 
 | Role | Name | Phone | Username | Email |
 | --- | --- | --- | --- | --- |
@@ -27,11 +27,12 @@ The local demo persists messages, profile fields, privacy choices, blocks, and r
 
 ## Real foundation
 
-- `server/index.ts` provides Express endpoints for health, local OTP sessions, chat reads, and message writes.
+- `server/index.ts` provides Express endpoints for health, OTP challenges, sessions, chat reads, and message writes.
 - SQLite stores users, sessions, chats, memberships, messages, devices, and privacy settings. The local database is `chettik.db` and is intentionally gitignored.
 - The seeded Nanda, Mark, and Alisher accounts are inserted on API startup.
+- OTP requests are provider-bound, hashed before storage, expire after ten minutes, allow five verification attempts, and are rate-limited by phone and IP. Sessions expire after 30 days and are revoked on logout or device termination.
 - The frontend obtains a session token after sign-in, reads the Nanda–Mark thread from the API, posts new messages there, and listens for `message.created` WebSocket broadcasts.
-- The local OTP provider accepts any 4–6 digit code only for development. SMS and Telegram delivery providers remain pluggable boundaries, not production integrations.
+- The development OTP provider logs delivery locally and uses `OTP_DEV_CODE` (default `123456`). Replace this provider with an audited SMS/Telegram provider before deployment.
 
 The generated product logo is at [public/logo.svg](public/logo.svg), used for the favicon, auth screen, and app header. Legal and credit documents are in [docs/legal](docs/legal); the product plan canvas is at [docs/plan/dev-hq-product-ideas.canvas.tsx](docs/plan/dev-hq-product-ideas.canvas.tsx).
 

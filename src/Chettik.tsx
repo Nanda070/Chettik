@@ -2,7 +2,7 @@ import { ArrowLeft, ArrowRight, Bot, Check, ChevronLeft, CircleUserRound, Flag, 
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { SettingsDrawer } from './Stage3Panels'
-import { DeliveryPanel, RichComposerSheet, VoiceButton } from './Stage4Panels'
+import { DeliveryPanel, MediaSendSheet, type MediaExpiry, RichComposerSheet, VoiceButton } from './Stage4Panels'
 import { Stage5Panel } from './Stage5Panel'
 import { ChatContextMenu, ConfirmModal, type ConfirmAction, ForwardPanel, MessageContextMenu, ProfilePanel } from './InteractionPanels'
 
@@ -14,20 +14,21 @@ export type Account = {
   email: string
   initials: string
   color: string
+  badges?: string[]
 }
 
 type LegalDoc = 'terms' | 'privacy' | 'authors'
 
 export const seedAccounts: Account[] = [
-  { role: 'SuperAdmin', name: 'Nanda', username: '@nanda', phone: '+11111111111', email: 'test@test.com', initials: 'N', color: '#9e2338' },
-  { role: 'Admin', name: 'Mark', username: '@mark', phone: '+22222222222', email: 'test2@test.com', initials: 'M', color: '#6e4c97' },
-  { role: 'User', name: 'Alisher', username: '@alisher', phone: '+33333333333', email: 'test3@test.com', initials: 'A', color: '#bf8057' },
+  { role: 'SuperAdmin', name: 'Nanda', username: '@nanda', phone: '+11111111111', email: 'test@test.com', initials: 'N', color: '#9e2338', badges: ['staff', 'early-supporter', 'official', 'crimson-circle'] },
+  { role: 'Admin', name: 'Mark', username: '@mark', phone: '+22222222222', email: 'test2@test.com', initials: 'M', color: '#6e4c97', badges: ['staff', 'early-supporter', 'ember-house'] },
+  { role: 'User', name: 'Alisher', username: '@alisher', phone: '+33333333333', email: 'test3@test.com', initials: 'A', color: '#bf8057', badges: ['early-supporter', 'aurora-house'] },
 ]
 
 type Language = 'EN' | 'RU'
-type MessageKind = 'text' | 'voice' | 'poll' | 'location' | 'circle'
-type Message = { id: string; sender: string; text: string; time: string; mine: boolean; reactions: string[]; pinned?: boolean; edited?: boolean; replyTo?: string; kind?: MessageKind; pollVotes?: number; voted?: boolean }
-export type ChatName = 'Mark' | 'Design circle' | 'Saved Messages' | 'Alisher'
+type MessageKind = 'text' | 'voice' | 'poll' | 'location' | 'circle' | 'media'
+type Message = { id: string; sender: string; text: string; time: string; mine: boolean; reactions: string[]; pinned?: boolean; edited?: boolean; replyTo?: string; kind?: MessageKind; pollVotes?: number; voted?: boolean; mediaExpiry?: MediaExpiry; opened?: boolean }
+export type ChatName = string
 type ChatMessages = Record<ChatName, Message[]>
 export type Audience = 'Everybody' | 'Contacts' | 'Nobody'
 export type Profile = {
@@ -59,22 +60,44 @@ export default function Chettik() {
   const [picked, setPicked] = useState<Account | null>(null)
   const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState('')
+  const [otpChallengeId, setOtpChallengeId] = useState('')
   const [authNotice, setAuthNotice] = useState('')
   const [session, setSession] = useState<Account | null>(null)
   const [legal, setLegal] = useState<LegalDoc | null>(null)
   const [desktopLogin, setDesktopLogin] = useState<'qr' | 'phone' | 'settings' | 'passkey'>('qr')
   const ru = language === 'RU'
   useEffect(() => { if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => undefined) }, [])
-  const tr = ru ? { invalid: 'Введите корректный номер телефона.', code: 'Код отправлен в локальную SMS-заглушку. Для демо: любые 4–6 цифр.', legal: ['Условия', 'Конфиденциальность', 'Авторы'] } : { invalid: 'Enter a valid phone number.', code: 'Code sent to the local SMS stub. Demo: any 4–6 digits.', legal: ['Terms', 'Privacy', 'Authors'] }
+  const tr = ru ? { invalid: 'Введите корректный номер телефона.', code: 'Код отправлен. В локальной разработке используйте 123456.', legal: ['Условия', 'Конфиденциальность', 'Авторы'] } : { invalid: 'Enter a valid phone number.', code: 'Code sent. For local development, use 123456.', legal: ['Terms', 'Privacy', 'Authors'] }
   const copy = ru
     ? { title: 'Тише. Ближе. По-своему.', subtitle: 'Приватность — по умолчанию. Знакомый интерфейс.', pick: 'Выберите демо-аккаунт', phone: 'или введите номер телефона', continue: 'Продолжить', secure: 'Телефон — основа личности. Сначала SMS OTP, затем fallback в Telegram.', code: 'Введите код из 6 цифр', verify: 'Подтвердить и войти', back: 'Назад' }
     : { title: 'A quieter place to be close.', subtitle: 'Private by instinct. Familiar by design.', pick: 'Choose a demo account', phone: 'or enter your phone number', continue: 'Continue', secure: 'Phone-first identity. SMS OTP with Telegram delivery fallback.', code: 'Enter the 6-digit code', verify: 'Verify & enter', back: 'Back' }
 
-  const requestOtp = () => { if (/^\+\d{10,15}$/.test(phone.replace(/\s/g, ''))) { setAuthNotice(''); setPicked(seedAccounts.find(a => a.phone === phone.replace(/\s/g, '')) ?? { ...seedAccounts[2], phone: phone.replace(/\s/g, ''), name: 'New user', username: '@new' }) } else setAuthNotice(tr.invalid) }
+  const beginOtp = async (targetPhone: string, fallback?: Account) => {
+    const normalizedPhone = targetPhone.replace(/\s/g, '')
+    if (!/^\+\d{10,15}$/.test(normalizedPhone)) return setAuthNotice(tr.invalid)
+    setAuthNotice('')
+    const response = await fetch(`${API_URL}/auth/otp/request`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: normalizedPhone }) })
+    const payload = await response.json() as { challengeId?: string; error?: string }
+    if (!response.ok || !payload.challengeId) return setAuthNotice(payload.error || tr.invalid)
+    setPhone(normalizedPhone)
+    setOtp('')
+    setOtpChallengeId(payload.challengeId)
+    setPicked(fallback || seedAccounts.find(account => account.phone === normalizedPhone) || { ...seedAccounts[2], phone: normalizedPhone, name: 'New user', username: '@new' })
+  }
+  const requestOtp = () => { void beginOtp(phone) }
+  const verifyOtp = async () => {
+    if (!picked || !otpChallengeId) return setAuthNotice(tr.code)
+    const response = await fetch(`${API_URL}/auth/otp/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: picked.phone, code: otp, challengeId: otpChallengeId, deviceLabel: 'Web • Browser' }) })
+    const payload = await response.json() as { token?: string; user?: Account; error?: string }
+    if (!response.ok || !payload.token || !payload.user) return setAuthNotice(payload.error || tr.code)
+    localStorage.setItem(sessionKey(payload.user), payload.token)
+    setAuthNotice('')
+    setSession(payload.user)
+  }
   if (legal) return <LegalPage doc={legal} language={language} dark={dark} onBack={() => setLegal(null)} />
   if (session) return <Messenger account={session} dark={dark} setDark={setDark} language={language} onLanguage={() => setLanguage(ru ? 'EN' : 'RU')} onLogout={() => { localStorage.removeItem(sessionKey(session)); setSession(null) }} />
   return <main className={`auth-screen ${dark ? 'dark' : ''}`}>
-    <section className="desktop-login"><header><button aria-label="Back" onClick={() => setDesktopLogin('qr')}><ChevronLeft size={20} /></button><button onClick={() => setDesktopLogin('settings')}>SETTINGS</button></header>{desktopLogin === 'settings' ? <div className="desktop-login-card"><img src="/logo.svg" alt="" /><h1>{ru ? 'Настройки входа' : 'Login settings'}</h1><p>{ru ? 'Язык и тема сохраняются локально на этом устройстве.' : 'Language and appearance are stored only on this device.'}</p><button className="desktop-outline" onClick={() => setLanguage(ru ? 'EN' : 'RU')}>{language === 'RU' ? 'English' : 'Русский'}</button><button className="desktop-outline" onClick={() => setDark(!dark)}>{dark ? 'Light mode' : 'Dark mode'}</button></div> : desktopLogin === 'passkey' ? <div className="desktop-login-card"><div className="desktop-passkey">⌁</div><h1>{ru ? 'Войти с ключом доступа' : 'Log in with a passkey'}</h1><p>{ru ? 'В локальной демо-версии ключи доступа настраиваются после входа. Используйте QR или номер телефона.' : 'Passkeys are configured after sign-in in this local demo. Use QR or your phone number.'}</p><button className="desktop-primary" onClick={() => setDesktopLogin('qr')}>{ru ? 'К QR-коду' : 'Back to QR'}</button></div> : desktopLogin === 'phone' ? <div className="desktop-login-card phone-login">{!picked ? <><h1>{ru ? 'Ваш номер телефона' : 'Your Phone Number'}</h1><p>{ru ? 'Подтвердите код страны и введите номер телефона.' : 'Please confirm your country code and enter your phone number.'}</p><label>{ru ? 'Страна' : 'Country'}<select aria-label="Country"><option>Russia</option><option>Azerbaijan</option><option>United States</option></select></label><form onSubmit={e => { e.preventDefault(); requestOtp() }}><input className="phone-code" value="+7" readOnly aria-label="Country code" /><input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+11111111111" aria-label="Phone number" required /><button className="desktop-primary" type="submit">{ru ? 'Далее' : 'Next'}</button></form><button className="desktop-link" onClick={() => setDesktopLogin('qr')}>{ru ? 'Быстрый вход по QR-коду' : 'Quick log in using QR code'}</button><div className="seed-login">{seedAccounts.map(item => <button key={item.phone} onClick={() => { setPhone(item.phone); setPicked(item) }}>{item.name}</button>)}</div>{authNotice && <p className="form-notice">{authNotice}</p>}</> : <><div className="avatar" style={{ background: picked.color }}>{picked.initials}</div><h1>{ru ? 'Подтвердите вход' : 'Confirm sign in'}</h1><p>{picked.phone} · {ru ? 'Введите любые 4–6 цифр из локальной SMS-заглушки.' : 'Enter any 4–6 digits from the local SMS stub.'}</p><form onSubmit={e => { e.preventDefault(); if (otp.length >= 4) setSession(picked); else setAuthNotice(tr.code) }}><input value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} aria-label="Desktop OTP" placeholder="••••••" autoFocus /><button className="desktop-primary">{ru ? 'Войти' : 'Sign in'}</button></form><button className="desktop-link" onClick={() => { setPicked(null); setOtp('') }}>{ru ? 'Изменить номер' : 'Change number'}</button></>}</div> : <div className="desktop-login-card qr-login"><div className="desktop-qr"><QrCode size={154} strokeWidth={1.25} /><img src="/logo.svg" alt="Chettik" /></div><h1>{ru ? 'Сканируйте в мобильном Chettik' : 'Scan From Mobile Chettik'}</h1><ol><li>{ru ? 'Откройте Chettik на телефоне' : 'Open Chettik on your phone'}</li><li>{ru ? 'Настройки → Устройства → Добавить устройство' : 'Go to Settings → Devices → Add Device'}</li><li>{ru ? 'Сканируйте код для входа' : 'Scan this code to log in'}</li></ol><button className="desktop-link" onClick={() => setDesktopLogin('phone')}>{ru ? 'Войти по номеру телефона' : 'Log in using phone number'}</button><button className="desktop-link" onClick={() => setDesktopLogin('passkey')}>{ru ? 'Войти с ключом доступа' : 'Log in using passkey'}</button><button className="qr-demo" onClick={() => setSession(seedAccounts[0])}>{ru ? 'Демо: подключить Nanda' : 'Demo: pair Nanda device'}</button></div>}</section>
+    <section className="desktop-login"><header><button aria-label="Back" onClick={() => setDesktopLogin('qr')}><ChevronLeft size={20} /></button><button onClick={() => setDesktopLogin('settings')}>SETTINGS</button></header>{desktopLogin === 'settings' ? <div className="desktop-login-card"><img src="/logo.svg" alt="" /><h1>{ru ? 'Настройки входа' : 'Login settings'}</h1><p>{ru ? 'Язык и тема сохраняются локально на этом устройстве.' : 'Language and appearance are stored only on this device.'}</p><button className="desktop-outline" onClick={() => setLanguage(ru ? 'EN' : 'RU')}>{language === 'RU' ? 'English' : 'Русский'}</button><button className="desktop-outline" onClick={() => setDark(!dark)}>{dark ? 'Light mode' : 'Dark mode'}</button></div> : desktopLogin === 'passkey' ? <div className="desktop-login-card"><div className="desktop-passkey">⌁</div><h1>{ru ? 'Войти с ключом доступа' : 'Log in with a passkey'}</h1><p>{ru ? 'В локальной демо-версии ключи доступа настраиваются после входа. Используйте QR или номер телефона.' : 'Passkeys are configured after sign-in in this local demo. Use QR or your phone number.'}</p><button className="desktop-primary" onClick={() => setDesktopLogin('qr')}>{ru ? 'К QR-коду' : 'Back to QR'}</button></div> : desktopLogin === 'phone' ? <div className="desktop-login-card phone-login">{!picked ? <><h1>{ru ? 'Ваш номер телефона' : 'Your Phone Number'}</h1><p>{ru ? 'Подтвердите код страны и введите номер телефона.' : 'Please confirm your country code and enter your phone number.'}</p><label>{ru ? 'Страна' : 'Country'}<select aria-label="Country"><option>Russia</option><option>Azerbaijan</option><option>United States</option></select></label><form onSubmit={e => { e.preventDefault(); requestOtp() }}><input className="phone-code" value="+7" readOnly aria-label="Country code" /><input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+11111111111" aria-label="Phone number" required /><button className="desktop-primary" type="submit">{ru ? 'Далее' : 'Next'}</button></form><button className="desktop-link" onClick={() => setDesktopLogin('qr')}>{ru ? 'Быстрый вход по QR-коду' : 'Quick log in using QR code'}</button><div className="seed-login">{seedAccounts.map(item => <button key={item.phone} onClick={() => void beginOtp(item.phone, item)}>{item.name}</button>)}</div>{authNotice && <p className="form-notice">{authNotice}</p>}</> : <><div className="avatar" style={{ background: picked.color }}>{picked.initials}</div><h1>{ru ? 'Подтвердите вход' : 'Confirm sign in'}</h1><p>{picked.phone} · {tr.code}</p><form onSubmit={e => { e.preventDefault(); void verifyOtp() }}><input value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} aria-label="Desktop OTP" placeholder="••••••" autoFocus /><button className="desktop-primary">{ru ? 'Войти' : 'Sign in'}</button></form><button className="desktop-link" onClick={() => { setPicked(null); setOtp(''); setOtpChallengeId('') }}>{ru ? 'Изменить номер' : 'Change number'}</button>{authNotice && <p className="form-notice">{authNotice}</p>}</>}</div> : <div className="desktop-login-card qr-login"><div className="desktop-qr"><QrCode size={154} strokeWidth={1.25} /><img src="/logo.svg" alt="Chettik" /></div><h1>{ru ? 'Сканируйте в мобильном Chettik' : 'Scan From Mobile Chettik'}</h1><ol><li>{ru ? 'Откройте Chettik на телефоне' : 'Open Chettik on your phone'}</li><li>{ru ? 'Настройки → Устройства → Добавить устройство' : 'Go to Settings → Devices → Add Device'}</li><li>{ru ? 'Сканируйте код для входа' : 'Scan this code to log in'}</li></ol><button className="desktop-link" onClick={() => setDesktopLogin('phone')}>{ru ? 'Войти по номеру телефона' : 'Log in using phone number'}</button><button className="desktop-link" onClick={() => setDesktopLogin('passkey')}>{ru ? 'Войти с ключом доступа' : 'Log in using passkey'}</button><button className="qr-demo" onClick={() => { setDesktopLogin('phone'); void beginOtp(seedAccounts[0].phone, seedAccounts[0]) }}>{ru ? 'Демо: отправить OTP Nanda' : 'Demo: send Nanda OTP'}</button></div>}</section>
     <div className="auth-ambient one" /><div className="auth-ambient two" />
     <header className="auth-header">
       <div className="auth-logo"><img src="/logo.svg" alt="" /> chettik</div>
@@ -83,8 +106,8 @@ export default function Chettik() {
     <section className="auth-layout">
       <div className="auth-intro"><div className="eyebrow"><ShieldCheck size={15} /> PRIVATE MESSENGER</div><h1>{copy.title}</h1><p>{copy.subtitle}</p><div className="auth-note"><Check size={16} /> {copy.secure}</div></div>
       <div className="auth-card">
-        {!picked && <><div className="card-kicker">{copy.pick}</div><div className="account-options">{seedAccounts.map(account => <button className="account-option" key={account.phone} onClick={() => setPicked(account)}><div className="avatar" style={{ background: account.color }}>{account.initials}</div><span><strong>{account.name}</strong><small>{account.username} · {account.role}</small></span><ArrowRight size={17} /></button>)}</div><div className="divider"><span>{copy.phone}</span></div><form onSubmit={(e) => { e.preventDefault(); requestOtp() }}><input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 234 567 8900" aria-label="Phone number" required /><button className="primary" type="submit">{copy.continue} <ArrowRight size={16} /></button></form>{authNotice && <p className="form-notice" role="alert">{authNotice}</p>}</>}
-        {picked && <><button className="back" onClick={() => { setPicked(null); setOtp(''); setAuthNotice('') }}><ChevronLeft size={16} /> {copy.back}</button><div className="code-user"><div className="avatar" style={{ background: picked.color }}>{picked.initials}</div><strong>{picked.name}</strong><span>{picked.phone}</span></div><p className="code-copy">{copy.code}</p><form onSubmit={(e) => { e.preventDefault(); if (otp.length >= 4) { setAuthNotice(''); setSession(picked) } else setAuthNotice(tr.code) }}><input className="otp" value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="••••••" inputMode="numeric" autoFocus required /><button className="primary" type="submit">{copy.verify} <ArrowRight size={16} /></button></form><small className="demo-hint">{tr.code}</small>{authNotice && <p className="form-notice" role="alert">{authNotice}</p>}</>}
+        {!picked && <><div className="card-kicker">{copy.pick}</div><div className="account-options">{seedAccounts.map(account => <button className="account-option" key={account.phone} onClick={() => void beginOtp(account.phone, account)}><div className="avatar" style={{ background: account.color }}>{account.initials}</div><span><strong>{account.name}</strong><small>{account.username} · {account.role}</small></span><ArrowRight size={17} /></button>)}</div><div className="divider"><span>{copy.phone}</span></div><form onSubmit={(e) => { e.preventDefault(); requestOtp() }}><input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 234 567 8900" aria-label="Phone number" required /><button className="primary" type="submit">{copy.continue} <ArrowRight size={16} /></button></form>{authNotice && <p className="form-notice" role="alert">{authNotice}</p>}</>}
+        {picked && <><button className="back" onClick={() => { setPicked(null); setOtp(''); setOtpChallengeId(''); setAuthNotice('') }}><ChevronLeft size={16} /> {copy.back}</button><div className="code-user"><div className="avatar" style={{ background: picked.color }}>{picked.initials}</div><strong>{picked.name}</strong><span>{picked.phone}</span></div><p className="code-copy">{copy.code}</p><form onSubmit={(e) => { e.preventDefault(); void verifyOtp() }}><input className="otp" value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="••••••" inputMode="numeric" autoFocus required /><button className="primary" type="submit">{copy.verify} <ArrowRight size={16} /></button></form><small className="demo-hint">{tr.code}</small>{authNotice && <p className="form-notice" role="alert">{authNotice}</p>}</>}
       </div>
     </section>
     <footer><span>© 2026 Chettik</span><span><button onClick={() => setLegal('terms')}>{tr.legal[0]}</button> · <button onClick={() => setLegal('privacy')}>{tr.legal[1]}</button> · <button onClick={() => setLegal('authors')}>{tr.legal[2]}</button></span></footer>
@@ -103,7 +126,7 @@ function LegalPage({ doc, language, dark, onBack }: { doc: LegalDoc; language: '
 }
 
 type MessengerProps = { account: Account; dark: boolean; setDark: (value: boolean) => void; language: Language; onLanguage: () => void; onLogout: () => void }
-type ChatRow = { id: string; name: ChatName; preview: string; time: string; initials: string; color: string; unread: number }
+type ChatRow = { id: string; name: ChatName; preview: string; time: string; initials: string; color: string; unread: number; secret?: boolean }
 const fallbackChats: ChatRow[] = [
   { id: 'nanda-mark', name: 'Mark', preview: 'That reads much better.', time: '10:42', initials: 'M', color: '#6e4c97', unread: 2 },
   { id: 'design-circle', name: 'Design circle', preview: 'Nanda: I shared the new motion study ✨', time: '09:30', initials: 'D', color: '#4c8a83', unread: 0 },
@@ -137,6 +160,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const [confirm, setConfirm] = useState<{ action: ConfirmAction; message?: Message } | null>(null)
   const [chatMenu, setChatMenu] = useState(false)
   const [messageMenu, setMessageMenu] = useState<Message | null>(null)
+  const [mediaFile, setMediaFile] = useState<File | null>(null)
   const [forwardMessage, setForwardMessage] = useState<Message | null>(null)
   const [chatPinned, setChatPinned] = useState(false)
   const [chatMuted, setChatMuted] = useState(false)
@@ -144,6 +168,10 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const [menuStub, setMenuStub] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const messages = chatMessages[selectedChat]
+  const logout = () => {
+    if (token) void fetch(`${API_URL}/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+    onLogout()
+  }
   const setMessages = (update: Message[] | ((current: Message[]) => Message[])) => setChatMessages(current => ({
     ...current,
     [selectedChat]: typeof update === 'function' ? update(current[selectedChat]) : update,
@@ -155,6 +183,15 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     setEditing(null)
     setChatMenu(false)
   }
+  const startSecretChat = (target: Account = seedAccounts[1]) => {
+    const name = `Secret chat · ${target.name}`
+    const secret = { id: `secret-${target.phone}`, name, preview: 'End-to-end on this device', time: '', initials: target.initials, color: target.color, unread: 0, secret: true }
+    setChatRows(current => current.some(chat => chat.id === secret.id) ? current : [secret, ...current])
+    setChatMessages(current => current[name] ? current : ({ ...current, [name]: [] }))
+    localStorage.setItem(`chettik-secret-chat-${account.phone}-${target.phone}`, JSON.stringify({ createdAt: new Date().toISOString(), deviceOnly: true }))
+    openChat(name)
+    setProfileOpen(false)
+  }
   const addToChat = (chat: ChatName, item: Message) => setChatMessages(current => ({ ...current, [chat]: [...current[chat], item] }))
   const profileForPanel = profileAccount.phone === account.phone ? profile : { ...profile, privacy: { ...profile.privacy, phone: 'Everybody' as Audience } }
   const phoneAudience = profileForPanel.privacy?.phone || profileForPanel.phoneVisibility
@@ -165,12 +202,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     let disposed = false
     const connect = async () => {
       let apiToken = localStorage.getItem(sessionKey(account))
-      if (!apiToken) {
-        const response = await fetch(`${API_URL}/auth/otp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: account.phone, code: '123456' }) })
-        if (!response.ok) return
-        apiToken = (await response.json() as { token: string }).token
-        localStorage.setItem(sessionKey(account), apiToken)
-      }
+      if (!apiToken) return
       setToken(apiToken)
       const headers = { Authorization: `Bearer ${apiToken}` }
       const [profileResponse, chatsResponse] = await Promise.all([fetch(`${API_URL}/me/profile`, { headers }), fetch(`${API_URL}/chats`, { headers })])
@@ -242,6 +274,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     if (action === 'pin') setChatPinned(value => !value)
     else if (action === 'mute') setChatMuted(value => !value)
     else if (action === 'unread') setChatUnread(true)
+    else if (action === 'secret') startSecretChat()
     else if (action === 'clear-history' || action === 'delete-chat') setConfirm({ action })
     setChatMenu(false)
   }
@@ -257,15 +290,20 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     else if (action.startsWith('react-')) setMessages(old => old.map(item => item.id === selected.id ? { ...item, reactions: [...item.reactions, action.slice(6)] } : item))
     setMessageMenu(null)
   }
-  const deliver = async (rawText: string, kind: MessageKind = 'text') => {
+  const deliver = async (rawText: string, kind: MessageKind = 'text', mediaExpiry?: MediaExpiry) => {
     const text = rawText.trim()
     if (!text || text.length > 4000) return
     const chat = chatRows.find(row => row.name === selectedChat)
-    if (!chat || !token) return
-    const response = await fetch(`${API_URL}/chats/${chat.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ text, kind }) })
+    if (!chat) return
+    if (chat.secret) {
+      setMessages(old => [...old, { id: crypto.randomUUID(), mine: true, sender: account.name, text, time: 'now', reactions: [], kind, mediaExpiry }])
+      return
+    }
+    if (!token) return
+    const response = await fetch(`${API_URL}/chats/${chat.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ text, kind, metadata: mediaExpiry ? { mediaExpiry } : undefined }) })
     const remote = await response.json() as { id: string; created_at: string }
     if (!response.ok) return
-    setMessages(old => old.some(item => item.id === remote.id) ? old : [...old, { id: remote.id, mine: true, sender: account.name, text, time: new Date(remote.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), reactions: [], replyTo: reply?.text, kind: kind === 'text' ? undefined : kind }])
+    setMessages(old => old.some(item => item.id === remote.id) ? old : [...old, { id: remote.id, mine: true, sender: account.name, text, time: new Date(remote.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), reactions: [], replyTo: reply?.text, kind: kind === 'text' ? undefined : kind, mediaExpiry }])
   }
   const send = async () => {
     const text = message.trim()
@@ -278,7 +316,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     setReply(null)
     setEditing(null)
   }
-  const attach = (file?: File) => { if (!file) return; void deliver(`📎 ${file.name} · ${Math.ceil(file.size / 1024)} KB${file.type.startsWith('image/') ? ' · photo as file' : ''}`) }
+  const attach = (file?: File) => { if (!file) return; if (file.type.startsWith('image/') || file.type.startsWith('video/')) setMediaFile(file); else void deliver(`📎 ${file.name} · ${Math.ceil(file.size / 1024)} KB`) }
   const deleteMessage = async (id: string) => {
     const response = await fetch(`${API_URL}/messages/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
     if (response.ok) setMessages(old => old.filter(message => message.id !== id))
@@ -293,7 +331,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       <section className="chat">
         <header className="chat-head"><button className="icon-btn mobile-menu" aria-label="Open main menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>{selectedChat === 'Mark' ? <><button className="icon-btn profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><div className="avatar" style={{ background: '#6e4c97' }}>M</div></button><button className="chat-person profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><strong>Mark <span className="badge">ADMIN</span></strong><span>online · cloud chat</span></button></> : <><div className="avatar" style={{ background: selectedChat === 'Saved Messages' ? account.color : chatRows.find(chat => chat.name === selectedChat)?.color }}>{selectedChat === 'Saved Messages' ? account.initials : selectedChat[0]}</div><div className="chat-person"><strong>{selectedChat}</strong><span>{selectedChat === 'Saved Messages' ? 'Messages saved for yourself' : 'cloud chat'}</span></div></>}<div className="head-actions"><button className="icon-btn" title="Switch language" onClick={onLanguage}>{language}</button><button className="icon-btn" aria-label="Toggle theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header>
         <div className="mobile-stories stories" aria-label={language === 'RU' ? 'Истории' : 'Stories'}>{[{ name: 'Mark', initials: 'M', color: '#6e4c97' }, { name: 'Nanda', initials: 'N', color: '#9e2338' }, { name: 'Alisher', initials: 'A', color: '#bf8057' }].map(story => <button className="story" key={story.name} onClick={() => setStoryOpen(story.name)}><span className="avatar" style={{ background: story.color }}>{story.initials}</span><span>{story.name}</span></button>)}</div>
-        <div className="messages" aria-live="polite"><div className="date">{language === 'RU' ? 'Сегодня' : 'Today'}</div>{matches.map(item => <div onContextMenu={event => { event.preventDefault(); setMessageMenu(item) }} className={`message ${item.mine ? 'mine' : ''}`} key={item.id}><div className="avatar" style={{ background: item.mine ? account.color : '#6e4c97' }}>{item.mine ? account.initials : 'M'}</div><div className={`bubble ${item.kind ? `bubble-${item.kind}` : ''}`}>{item.replyTo && <small className="reply-ref">↳ {item.replyTo}</small>}<span className="sender">{item.sender}</span>{item.kind === 'voice' ? <div className="voice-message"><span className="voice-wave">▁▃▆▇▅▇▃▂</span><strong>{item.text}</strong></div> : item.kind === 'circle' ? <div className="circle-message"><span>▶</span><small>{item.text}</small></div> : item.kind === 'location' ? <div className="location-message"><span>⌖</span><strong>{item.text}</strong><small>Private chat location</small></div> : item.kind === 'poll' ? <div className="poll-message"><strong>{item.text}</strong><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted, pollVotes: (m.pollVotes || 0) + (m.voted ? -1 : 1) } : m))}>{item.voted ? '✓ Yes, works for me' : 'Yes, works for me'} <em>{item.pollVotes || 0}</em></button><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted } : m))}>Need another time</button><small>{item.pollVotes || 0} votes · public in this chat</small></div> : item.text}<div className="message-tools"><button onClick={() => setReply(item)} title="Reply"><ArrowLeft size={12} /></button><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, reactions: [...m.reactions, '❤️'] } : m))}>❤️ {item.reactions.length || ''}</button><button title="Forward" onClick={() => setForwardMessage(item)}><Forward size={12} /></button><button title="Pin" onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, pinned: !m.pinned } : m))}><Pin size={12} /></button>{item.mine && item.kind === undefined && <button aria-label="Edit message" onClick={() => { setEditing(item); setMessage(item.text); setReply(null) }}><Pencil size={12} /></button>}<button aria-label="Report message" onClick={() => setConfirm({ action: 'report', message: item })}><Flag size={12} /></button>{item.mine && <button aria-label="Delete message" onClick={() => setConfirm({ action: 'delete-message', message: item })}><Trash2 size={12} /></button>}</div><span className="meta">{item.pinned ? '📌 ' : ''}{item.time} {item.edited ? 'edited' : ''} {item.mine ? '✓✓' : ''}</span></div></div>)}</div>
+        <div className="messages" aria-live="polite"><div className="date">{language === 'RU' ? 'Сегодня' : 'Today'}</div>{matches.map(item => <div onContextMenu={event => { event.preventDefault(); setMessageMenu(item) }} className={`message ${item.mine ? 'mine' : ''}`} key={item.id}><div className="avatar" style={{ background: item.mine ? account.color : '#6e4c97' }}>{item.mine ? account.initials : 'M'}</div><div className={`bubble ${item.kind ? `bubble-${item.kind}` : ''}`}>{item.replyTo && <small className="reply-ref">↳ {item.replyTo}</small>}<span className="sender">{item.sender}</span>{item.kind === 'voice' ? <div className="voice-message"><span className="voice-wave">▁▃▆▇▅▇▃▂</span><strong>{item.text}</strong></div> : item.kind === 'circle' ? <div className="circle-message"><span>▶</span><small>{item.text}</small></div> : item.kind === 'media' ? <button className="timed-media" aria-label="Open timed media" onClick={() => { if (item.mediaExpiry === 'once') setMessages(old => old.filter(message => message.id !== item.id)); else if (item.mediaExpiry && item.mediaExpiry !== 'never') { setMessages(old => old.map(message => message.id === item.id ? { ...message, opened: true } : message)); window.setTimeout(() => setMessages(old => old.filter(message => message.id !== item.id)), Number(item.mediaExpiry) * 1000) } }}><span>▧</span><strong>{item.opened ? 'Media opened' : item.text}</strong><small>{item.mediaExpiry === 'once' ? '1 · View once' : item.mediaExpiry === 'never' || !item.mediaExpiry ? 'Saved media' : `${item.mediaExpiry}s · tap to view`}</small></button> : item.kind === 'location' ? <div className="location-message"><span>⌖</span><strong>{item.text}</strong><small>Private chat location</small></div> : item.kind === 'poll' ? <div className="poll-message"><strong>{item.text}</strong><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted, pollVotes: (m.pollVotes || 0) + (m.voted ? -1 : 1) } : m))}>{item.voted ? '✓ Yes, works for me' : 'Yes, works for me'} <em>{item.pollVotes || 0}</em></button><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, voted: !m.voted } : m))}>Need another time</button><small>{item.pollVotes || 0} votes · public in this chat</small></div> : item.text}<div className="message-tools"><button onClick={() => setReply(item)} title="Reply"><ArrowLeft size={12} /></button><button onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, reactions: [...m.reactions, '❤️'] } : m))}>❤️ {item.reactions.length || ''}</button><button title="Forward" onClick={() => setForwardMessage(item)}><Forward size={12} /></button><button title="Pin" onClick={() => setMessages(old => old.map(m => m.id === item.id ? { ...m, pinned: !m.pinned } : m))}><Pin size={12} /></button>{item.mine && item.kind === undefined && <button aria-label="Edit message" onClick={() => { setEditing(item); setMessage(item.text); setReply(null) }}><Pencil size={12} /></button>}<button aria-label="Report message" onClick={() => setConfirm({ action: 'report', message: item })}><Flag size={12} /></button>{item.mine && <button aria-label="Delete message" onClick={() => setConfirm({ action: 'delete-message', message: item })}><Trash2 size={12} /></button>}</div><span className="meta">{item.pinned ? '📌 ' : ''}{item.time} {item.edited ? 'edited' : ''} {item.mine ? '✓✓' : ''}</span></div></div>)}</div>
         <form className={`compose ${editing ? 'editing' : ''}`} onSubmit={(e) => { e.preventDefault(); send() }}>
           {(reply || editing) && <div className="compose-context"><Pencil size={17} /><span><strong>{editing ? 'Edit message' : 'Replying to Mark'}</strong><small>{(editing || reply)?.text.slice(0, 72)}</small></span><button type="button" onClick={() => { setEditing(null); setReply(null); setMessage('') }}><X size={17} /></button></div>}
           <input ref={fileInput} type="file" hidden onChange={e => { attach(e.target.files?.[0]); e.currentTarget.value = '' }} /><button className="icon-btn" type="button" title="Attach file" onClick={() => fileInput.current?.click()}><Paperclip size={19} /></button><button className="icon-btn rich-trigger" type="button" aria-label="Open rich message tools" onClick={() => setRichOpen(true)}><Plus size={19} /></button><input aria-label="Message text" maxLength={4000} value={message} onChange={e => setMessage(e.target.value)} placeholder={language === 'RU' ? 'Написать сообщение…' : 'Write a message…'} /><button className="icon-btn" type="button" aria-label="Open emoji picker" onClick={() => setEmojiOpen(!emojiOpen)}><Smile size={19} /></button>{!message && !editing ? <VoiceButton mode={recordingMode} active={recording} onModeToggle={() => setRecordingMode(mode => mode === 'voice' ? 'circle' : 'voice')} onStart={startRecording} onStop={stopRecording} /> : <button className="send" aria-label={editing ? 'Save message' : 'Send message'}>{editing ? <Check size={18} /> : <Send size={17} />}</button>}
@@ -301,11 +339,12 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
         </form>
         <nav className="mobile-nav"><button className="active"><MessageCircle size={19} />Chats</button><button onClick={() => setSettingsOpen(true)}><CircleUserRound size={19} />Profile</button><button onClick={() => setSettingsOpen(true)}><Settings size={19} />Settings</button></nav>
       </section>
-      {settingsOpen && <SettingsDrawer account={account} profile={profile} setProfile={setProfile} token={token} dark={dark} setDark={setDark} language={language} onLanguage={onLanguage} onDelivery={() => setDeliveryOpen(true)} onClose={() => setSettingsOpen(false)} onLogout={onLogout} />}
+      {settingsOpen && <SettingsDrawer account={account} profile={profile} setProfile={setProfile} token={token} dark={dark} setDark={setDark} language={language} onLanguage={onLanguage} onDelivery={() => setDeliveryOpen(true)} onClose={() => setSettingsOpen(false)} onLogout={logout} />}
       {deliveryOpen && <DeliveryPanel language={language} enabled={!!profile.pushEnabled} telemetry={!!profile.telemetryEnabled} onChange={patch => setProfile({ ...profile, pushEnabled: patch.push ?? profile.pushEnabled, telemetryEnabled: patch.telemetry ?? profile.telemetryEnabled })} onClose={() => setDeliveryOpen(false)} />}
       {richOpen && <RichComposerSheet language={language} onClose={() => setRichOpen(false)} onSend={addRich} />}
+      {mediaFile && <MediaSendSheet file={mediaFile} language={language} onClose={() => setMediaFile(null)} onSend={mode => { void deliver(`📷 ${mediaFile.name}`, 'media', mode); setMediaFile(null) }} />}
       {storyOpen && <div className="story-overlay" role="dialog" aria-modal="true" aria-label={`${storyOpen} story`} onClick={() => setStoryOpen(null)}><div className="story-card" onClick={e => e.stopPropagation()}><button aria-label="Close story" onClick={() => setStoryOpen(null)}><X size={19} /></button><div className="story-progress"><i /></div><div className="story-copy"><span className="avatar" style={{ background: storyOpen === 'Mark' ? '#6e4c97' : storyOpen === 'Nanda' ? '#9e2338' : '#bf8057' }}>{storyOpen[0]}</span><strong>{storyOpen}</strong><small>{language === 'RU' ? 'только что' : 'just now'}</small></div><p>{language === 'RU' ? 'Немного тишины между важными делами.' : 'A little quiet between important things.'}</p><small className="story-privacy"><ShieldCheck size={14} />{language === 'RU' ? 'История исчезнет через 24 часа' : 'This story disappears in 24 hours'}</small></div></div>}
-      {profileOpen && <ProfilePanel account={profileAccount} phoneVisible={canViewPhone} onClose={() => setProfileOpen(false)} onBlock={() => { setProfileOpen(false); setConfirm({ action: 'block' }) }} />}
+      {profileOpen && <ProfilePanel account={profileAccount} phoneVisible={canViewPhone} onClose={() => setProfileOpen(false)} onStartSecret={() => startSecretChat(profileAccount)} onBlock={() => { setProfileOpen(false); setConfirm({ action: 'block' }) }} />}
       {confirm && <ConfirmModal action={confirm.action} name="Mark" onClose={() => setConfirm(null)} onConfirm={confirmAction} />}
       {messageMenu && <MessageContextMenu mine={messageMenu.mine} time={messageMenu.time} onAction={handleMessageMenu} />}
       {forwardMessage && <ForwardPanel onClose={() => setForwardMessage(null)} onForward={target => { addToChat(target, { id: crypto.randomUUID(), mine: true, sender: account.name, text: forwardMessage.text, time: 'now', reactions: [] }); setForwardMessage(null) }} />}

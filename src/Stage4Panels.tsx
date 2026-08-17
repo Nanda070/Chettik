@@ -1,4 +1,4 @@
-import { BellRing, Camera, Check, ChevronRight, EyeOff, MapPin, Mic, ShieldCheck, SlidersHorizontal, X } from 'lucide-react'
+import { BellRing, Camera, Check, ChevronRight, EyeOff, MapPin, Mic, ShieldCheck, SlidersHorizontal, Timer, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 
 type Props = {
@@ -33,6 +33,23 @@ export function RichComposerSheet({ language, onClose, onSend }: Props) {
       <button onClick={() => setView('poll')}><span className="rich-icon poll"><SlidersHorizontal size={21} /></span><span><strong>{labels.poll}</strong><small>{ru ? 'Соберите решение без шума' : 'Decide together, quietly'}</small></span><ChevronRight size={18} /></button>
       <button onClick={() => setView('location')}><span className="rich-icon location"><MapPin size={21} /></span><span><strong>{labels.location}</strong><small>{ru ? 'Поделитесь только в чате' : 'Share only with this chat'}</small></span><ChevronRight size={18} /></button>
     </div>
+  </div>
+}
+
+export type MediaExpiry = 'once' | '3' | '10' | '30' | 'never'
+export function MediaSendSheet({ file, language, onClose, onSend }: { file: File; language: 'EN' | 'RU'; onClose: () => void; onSend: (mode: MediaExpiry) => void }) {
+  const [mode, setMode] = useState<MediaExpiry>('never')
+  const [picker, setPicker] = useState(false)
+  const ru = language === 'RU'
+  const options: Array<[MediaExpiry, string]> = [['once', ru ? 'Однократный просмотр' : 'View Once'], ['3', '3 seconds'], ['10', '10 seconds'], ['30', '30 seconds'], ['never', ru ? 'Не удалять' : 'Do Not Delete']]
+  const selected = options.find(option => option[0] === mode)?.[1]
+  return <div className="rich-sheet media-send-sheet" role="dialog" aria-modal="true" aria-label="Media send options">
+    <SheetHead title={ru ? 'Отправить медиа' : 'Send media'} onClose={onClose} />
+    <div className="media-preview"><Camera size={34} /><strong>{file.name}</strong><small>{Math.ceil(file.size / 1024)} KB · {file.type.startsWith('video/') ? 'video' : 'photo'}</small></div>
+    <div className="media-caption"><input aria-label="Media caption" placeholder={ru ? 'Добавить подпись' : 'Add a caption'} /><button type="button" aria-label="Set media timer" onClick={() => setPicker(!picker)}><Timer size={20} /><b>{mode === 'once' ? '1' : ''}</b></button></div>
+    {picker && <div className="media-expiry-picker" role="listbox" aria-label="Media expiry">{options.map(([value, label]) => <button key={value} className={value === mode ? 'active' : ''} onClick={() => { setMode(value); setPicker(false) }}><span>{value === 'once' ? '1' : value === 'never' ? '∞' : `${value}s`}</span>{label}<Check size={17} /></button>)}</div>}
+    <p className="media-expiry-note"><EyeOff size={15} />{mode === 'never' ? (ru ? 'Медиа останется в этом чате.' : 'Media stays in this chat.') : `${selected} · ${ru ? 'получатель увидит это по правилам таймера.' : 'the recipient can view this under the selected expiry rule.'}`}</p>
+    <button className="rich-primary" onClick={() => onSend(mode)}><Check size={17} />{ru ? 'Отправить' : 'Send media'}</button>
   </div>
 }
 
