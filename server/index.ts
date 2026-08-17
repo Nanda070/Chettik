@@ -78,8 +78,8 @@ const otpProvider = developmentOtpProvider
 const OTP_TTL_MS = 10 * 60 * 1000
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const OTP_MAX_ATTEMPTS = 5
-const OTP_PHONE_LIMIT = 30
-const OTP_IP_LIMIT = 120
+const OTP_PHONE_LIMIT = process.env.NODE_ENV === 'production' ? 3 : 10_000
+const OTP_IP_LIMIT = process.env.NODE_ENV === 'production' ? 10 : 10_000
 const OTP_RATE_WINDOW_MS = 15 * 60 * 1000
 const otpRequests = new Map<string, number[]>()
 function pruneRateLimit(key: string) {
@@ -146,9 +146,12 @@ app.post('/api/auth/otp/verify', (request, response) => {
   const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) as SessionUser | undefined
   if (!user) return response.status(401).json({ error: 'This phone number is not registered' })
   const token = randomUUID()
-  const deviceId = randomUUID()
+  const label = String(deviceLabel || 'Web • Browser').slice(0, 80)
+  const existingDevice = db.prepare('SELECT id FROM devices WHERE user_id = ? AND label = ? ORDER BY last_seen DESC LIMIT 1').get(user.id, label) as { id: string } | undefined
+  const deviceId = existingDevice?.id || randomUUID()
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString()
-  db.prepare('INSERT INTO devices (id, user_id, label, last_seen) VALUES (?, ?, ?, ?)').run(deviceId, user.id, String(deviceLabel || 'Web • Browser').slice(0, 80), new Date().toISOString())
+  if (existingDevice) db.prepare('UPDATE devices SET last_seen = ? WHERE id = ?').run(new Date().toISOString(), deviceId)
+  else db.prepare('INSERT INTO devices (id, user_id, label, last_seen) VALUES (?, ?, ?, ?)').run(deviceId, user.id, label, new Date().toISOString())
   db.prepare('INSERT INTO sessions (token, user_id, device_id, expires_at) VALUES (?, ?, ?, ?)').run(token, user.id, deviceId, expiresAt)
   response.json({ token, user: publicUser(user), expiresAt })
 })

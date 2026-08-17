@@ -21,6 +21,7 @@ This checkpoint delivers a usable local SQLite messenger with API-backed profile
 2. Secret-chat entry and timed-media UX are implemented as device-local MVPs: secret messages do not use the cloud API, and cloud-media expiry metadata is stored. Replace browser-local secret storage with audited encrypted IndexedDB and add device-key handshake before production.
 3. Profile badge assignments are now persisted with user records. The current Staff, Early Supporter, System, Official, OP, and Chettik-house catalog is seed/demo data; add administration and authorization workflows before public issuance.
 4. Global settings no longer surface message-delivery controls; secret chats and expiring media belong in their per-chat composer and user-action flows.
+5. ✅ Device sessions are deduplicated by device identity, other sessions can be revoked with confirmation, and shared-media profile tiles open functional Photos/Files/Links panels. Replace placeholder gallery items with authenticated attachment queries as upload storage lands.
 2. Implement real QR device linking and passkeys.
 3. Define secret-chat cryptography, device key management, recovery, and independent security review before claiming E2E support.
 

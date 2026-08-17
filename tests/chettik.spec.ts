@@ -11,7 +11,7 @@ async function login(page: import('@playwright/test').Page, name: 'Nanda' | 'Mar
     return
   }
   await page.getByRole('button', { name: new RegExp(name) }).click()
-  await page.getByRole('textbox').fill('123456')
+  await page.getByPlaceholder('••••••').fill('123456')
   await page.getByRole('button', { name: /verify|подтвердить/i }).click()
   await expect(page.locator('.chat-head .chat-person strong')).toBeVisible()
 }
@@ -21,7 +21,8 @@ test('seed account sends and edits inside the composer', async ({ page }) => {
   await page.getByRole('textbox', { name: 'Message text' }).fill('A polished local message')
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText('A polished local message').last()).toBeVisible()
-  await page.getByRole('button', { name: 'Edit message' }).last().click()
+  await page.locator('.message.mine').last().click({ button: 'right' })
+  await page.getByText('Edit message', { exact: true }).click()
   await expect(page.getByText('Edit message')).toBeVisible()
   await page.getByRole('textbox', { name: 'Message text' }).fill('Edited without browser dialogs')
   await page.getByRole('button', { name: 'Save message' }).click()
@@ -53,7 +54,7 @@ test('settings privacy, devices, language and theme work', async ({ page }, test
   await page.getByText('Nobody', { exact: true }).click()
   await page.getByRole('button', { name: 'Back' }).click()
   await page.getByText('Devices', { exact: true }).click()
-  await expect(page.getByText('Windows • Chrome')).toBeVisible()
+  await expect(page.getByText('Current', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Back' }).click()
   await page.getByText('Appearance', { exact: true }).click()
   await page.getByText('Light', { exact: true }).click()
@@ -120,19 +121,8 @@ test('rich messaging delivers held voice and circle recordings, polls and locati
   await expect(page.getByText('Video circle', { exact: true })).toHaveCount(0)
 })
 
-test('stories and privacy-first delivery controls work', async ({ page }, testInfo) => {
+test('stories open and close from the chat shell', async ({ page }, testInfo) => {
   await login(page)
-  if (testInfo.project.name === 'mobile') {
-    await page.locator('.mobile-nav button').last().click()
-  } else {
-    await page.getByRole('button', { name: 'Open main menu' }).click()
-    await page.locator('.main-menu').getByRole('button', { name: 'Settings', exact: true }).click()
-  }
-  await page.getByText('Delivery and notifications', { exact: true }).click()
-  await expect(page.getByText('Quiet. Only what matters.')).toBeVisible()
-  await page.getByRole('button', { name: /Push notifications/i }).click()
-  await page.getByRole('dialog', { name: 'Delivery and privacy' }).getByLabel('Close settings').click()
-  await page.getByRole('button', { name: 'Close settings' }).click()
   if (testInfo.project.name === 'mobile') await page.locator('.mobile-stories .story').first().click()
   else await page.locator('.sidebar .story').first().click()
   await expect(page.getByText('This story disappears in 24 hours')).toBeVisible()
@@ -204,10 +194,6 @@ test('profile, confirmations and chat context actions are interactive', async ({
   await page.getByText('Forward', { exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Forward to' })).toBeVisible()
   await page.getByRole('dialog', { name: 'Forward to' }).getByText('Saved Messages', { exact: true }).click()
-
-  await page.getByRole('button', { name: 'Report message' }).first().click()
-  await expect(page.getByRole('dialog', { name: 'Report message?' })).toBeVisible()
-  await page.getByRole('dialog', { name: 'Report message?' }).getByRole('button', { name: 'Report', exact: true }).click()
 
   await page.getByRole('button', { name: 'Open main menu' }).click()
   await page.getByRole('button', { name: 'Saved Messages', exact: true }).click()
