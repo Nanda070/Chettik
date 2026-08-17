@@ -14,7 +14,10 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS chat_members (chat_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (chat_id, user_id));
   CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, sender_id TEXT NOT NULL, text TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, label TEXT NOT NULL, last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, bio TEXT NOT NULL DEFAULT '', github TEXT NOT NULL DEFAULT '', discord TEXT NOT NULL DEFAULT '', privacy_json TEXT NOT NULL DEFAULT '{}');
   CREATE TABLE IF NOT EXISTS privacy_settings (user_id TEXT PRIMARY KEY, phone TEXT NOT NULL DEFAULT 'Contacts', last_seen TEXT NOT NULL DEFAULT 'Contacts');
+  CREATE TABLE IF NOT EXISTS blocked_users (user_id TEXT NOT NULL, blocked_user_id TEXT NOT NULL, PRIMARY KEY (user_id, blocked_user_id));
+  CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, reporter_id TEXT NOT NULL, message_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 `)
 const users = [
   ['nanda', 'Nanda', '@nanda', '+11111111111', 'SuperAdmin', 'test@test.com', 'N', '#9e2338'],
@@ -23,19 +26,33 @@ const users = [
 ]
 const insertUser = db.prepare('INSERT OR IGNORE INTO users (id, name, username, phone, role, email, initials, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
 const insertPrivacy = db.prepare('INSERT OR IGNORE INTO privacy_settings (user_id) VALUES (?)')
+const insertProfile = db.prepare('INSERT OR IGNORE INTO profiles (user_id) VALUES (?)')
 const insertDevice = db.prepare('INSERT OR IGNORE INTO devices (id, user_id, label) VALUES (?, ?, ?)')
-for (const user of users) { insertUser.run(...user); insertPrivacy.run(user[0]); insertDevice.run(`${user[0]}-local`, user[0], 'Local development device') }
-db.prepare("INSERT OR IGNORE INTO chats (id, title, type) VALUES ('nanda-mark', 'Mark', 'direct')").run()
-db.prepare("INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES ('nanda-mark', ?)").run('nanda')
-db.prepare("INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES ('nanda-mark', ?)").run('mark')
+for (const user of users) { insertUser.run(...user); insertPrivacy.run(user[0]); insertProfile.run(user[0]); insertDevice.run(`${user[0]}-local`, user[0], 'Windows • Chrome') }
+db.prepare("UPDATE devices SET label = 'Windows • Chrome' WHERE id LIKE '%-local'").run()
+const seedChat = (id: string, title: string, type: string, members: string[]) => {
+  db.prepare('INSERT OR IGNORE INTO chats (id, title, type) VALUES (?, ?, ?)').run(id, title, type)
+  const join = db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)')
+  members.forEach(member => join.run(id, member))
+}
+seedChat('nanda-mark', 'Mark', 'direct', ['nanda', 'mark'])
+seedChat('design-circle', 'Design circle', 'group', ['nanda', 'mark', 'alisher'])
+seedChat('nanda-alisher', 'Alisher', 'direct', ['nanda', 'alisher'])
+users.forEach(([id]) => seedChat(`saved-${id}`, 'Saved Messages', 'saved', [id]))
+const joinEverySeedChat = db.prepare('INSERT OR IGNORE INTO chat_members (chat_id, user_id) VALUES (?, ?)')
+for (const chatId of ['nanda-mark', 'design-circle', 'nanda-alisher', 'saved-nanda', 'saved-mark', 'saved-alisher']) {
+  for (const [userId] of users) joinEverySeedChat.run(chatId, userId)
+}
 const seedMessage = db.prepare('INSERT OR IGNORE INTO messages (id, chat_id, sender_id, text, kind) VALUES (?, ?, ?, ?, ?)')
 seedMessage.run('seed-mark-1', 'nanda-mark', 'mark', 'I tried the new onboarding flow. It feels really calm.', 'text')
 seedMessage.run('seed-nanda-1', 'nanda-mark', 'nanda', 'That was the idea. Less noise, more space for people.', 'text')
+seedMessage.run('seed-saved-nanda-1', 'saved-nanda', 'nanda', 'Remember to write this down.', 'text')
 
 type SessionUser = { id: string; name: string; username: string; phone: string; role: string; email: string; initials: string; color: string }
 const app = express()
 app.use(express.json())
-app.use((_, response, next) => { response.setHeader('Access-Control-Allow-Origin', 'http://127.0.0.1:5173'); response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); next() })
+app.use((_, response, next) => { response.setHeader('Access-Control-Allow-Origin', 'http://127.0.0.1:5173'); response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS'); next() })
+app.options('/api/{*path}', (_, response) => response.sendStatus(204))
 
 function session(request: express.Request): SessionUser | undefined {
   const token = request.header('authorization')?.replace('Bearer ', '')
@@ -59,14 +76,80 @@ app.post('/api/auth/otp', (request, response) => {
 })
 app.get('/api/chats', (request, response) => {
   const user = requireSession(request, response); if (!user) return
-  const chats = db.prepare('SELECT c.* FROM chats c JOIN chat_members m ON m.chat_id = c.id WHERE m.user_id = ?').all(user.id)
+  const chats = db.prepare(`
+    SELECT c.*, COALESCE((SELECT m.text FROM messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1), '') AS preview,
+    (SELECT m.created_at FROM messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_at
+    FROM chats c JOIN chat_members cm ON cm.chat_id = c.id
+    WHERE cm.user_id = ? AND (c.type != 'saved' OR c.id = 'saved-' || ?)
+    ORDER BY COALESCE(last_message_at, '') DESC, c.title
+  `).all(user.id, user.id)
   response.json(chats)
+})
+app.get('/api/me/profile', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const profile = db.prepare('SELECT * FROM profiles WHERE user_id = ?').get(user.id) as { bio: string; github: string; discord: string; privacy_json: string }
+  response.json({ ...user, bio: profile.bio, github: profile.github, discord: profile.discord, privacy: JSON.parse(profile.privacy_json) })
+})
+app.patch('/api/me/profile', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const { bio = '', github = '', discord = '', privacy = {} } = request.body as { bio?: string; github?: string; discord?: string; privacy?: Record<string, string> }
+  db.prepare('UPDATE profiles SET bio = ?, github = ?, discord = ?, privacy_json = ? WHERE user_id = ?').run(bio, github, discord, JSON.stringify(privacy), user.id)
+  db.prepare('UPDATE privacy_settings SET phone = ?, last_seen = ? WHERE user_id = ?').run(privacy.phone || 'Contacts', privacy.lastSeen || 'Contacts', user.id)
+  response.json({ ok: true })
+})
+app.get('/api/users/:userId/profile', (request, response) => {
+  const viewer = requireSession(request, response); if (!viewer) return
+  const target = db.prepare('SELECT u.*, p.bio, p.github, p.discord, p.privacy_json FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.id = ?').get(request.params.userId) as (SessionUser & { bio: string; github: string; discord: string; privacy_json: string }) | undefined
+  if (!target) return response.status(404).json({ error: 'User not found' })
+  const privacy = JSON.parse(target.privacy_json) as Record<string, string>
+  const phoneVisible = target.id === viewer.id || privacy.phone !== 'Nobody'
+  response.json({ ...target, phone: phoneVisible ? target.phone : undefined, privacy })
+})
+app.get('/api/me/devices', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  response.json(db.prepare('SELECT * FROM devices WHERE user_id = ? ORDER BY last_seen DESC').all(user.id))
+})
+app.delete('/api/me/devices/:deviceId', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  db.prepare('DELETE FROM devices WHERE id = ? AND user_id = ?').run(request.params.deviceId, user.id)
+  response.status(204).end()
 })
 app.get('/api/chats/:chatId/messages', (request, response) => {
   const user = requireSession(request, response); if (!user) return
   const member = db.prepare('SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?').get(request.params.chatId, user.id)
   if (!member) return response.status(403).json({ error: 'Not a chat member' })
   response.json(db.prepare('SELECT m.*, u.name AS sender_name FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.chat_id = ? ORDER BY m.created_at').all(request.params.chatId))
+})
+app.patch('/api/messages/:messageId', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const { text } = request.body as { text?: string }
+  if (!text?.trim() || text.length > 4000) return response.status(400).json({ error: 'Message text must be 1–4000 characters' })
+  const message = db.prepare('SELECT * FROM messages WHERE id = ? AND sender_id = ?').get(request.params.messageId, user.id) as { id: string; chat_id: string } | undefined
+  if (!message) return response.status(403).json({ error: 'Only the sender can edit this message' })
+  db.prepare('UPDATE messages SET text = ? WHERE id = ?').run(text.trim(), message.id)
+  broadcast({ type: 'message.updated', message: { id: message.id, chat_id: message.chat_id, text: text.trim() } })
+  response.json({ ...message, text: text.trim() })
+})
+app.delete('/api/messages/:messageId', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const message = db.prepare('SELECT * FROM messages WHERE id = ? AND sender_id = ?').get(request.params.messageId, user.id) as { id: string; chat_id: string } | undefined
+  if (!message) return response.status(403).json({ error: 'Only the sender can delete this message' })
+  db.prepare('DELETE FROM messages WHERE id = ?').run(message.id)
+  broadcast({ type: 'message.deleted', message: { id: message.id, chat_id: message.chat_id } })
+  response.status(204).end()
+})
+app.post('/api/messages/:messageId/reports', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  const exists = db.prepare('SELECT 1 FROM messages WHERE id = ?').get(request.params.messageId)
+  if (!exists) return response.status(404).json({ error: 'Message not found' })
+  db.prepare('INSERT OR IGNORE INTO reports (id, reporter_id, message_id) VALUES (?, ?, ?)').run(randomUUID(), user.id, request.params.messageId)
+  response.status(201).json({ ok: true })
+})
+app.post('/api/users/:userId/block', (request, response) => {
+  const user = requireSession(request, response); if (!user) return
+  if (user.id === request.params.userId) return response.status(400).json({ error: 'Cannot block yourself' })
+  db.prepare('INSERT OR IGNORE INTO blocked_users (user_id, blocked_user_id) VALUES (?, ?)').run(user.id, request.params.userId)
+  response.status(201).json({ ok: true })
 })
 
 const httpServer = createServer(app)

@@ -28,6 +28,22 @@ test('seed account sends and edits inside the composer', async ({ page }) => {
   await expect(page.getByText('Edited without browser dialogs').last()).toBeVisible()
 })
 
+test('long Mark chat scrolls messages while shell stays visible', async ({ page }, testInfo) => {
+  await login(page)
+  const composer = page.locator('.compose')
+  await page.locator('.messages').evaluate(node => {
+    const source = node.querySelector('.message')
+    if (!source) throw new Error('Mark chat must contain a message')
+    for (let index = 0; index < 32; index += 1) node.append(source.cloneNode(true))
+  })
+  await expect(composer).toBeVisible()
+  const messages = page.locator('.messages')
+  await messages.evaluate(node => { node.scrollTop = node.scrollHeight })
+  await expect(composer).toBeVisible()
+  await expect(page.locator('.chat-head')).toBeVisible()
+  if (testInfo.project.name === 'desktop') await expect(page.locator('.sidebar')).toBeVisible()
+})
+
 test('settings privacy, devices, language and theme work', async ({ page }, testInfo) => {
   await login(page)
   if (testInfo.project.name === 'mobile') await page.locator('.mobile-nav button').last().click()
@@ -82,23 +98,23 @@ test('rich messaging delivers held voice and circle recordings, polls and locati
   await page.waitForTimeout(220)
   await expect(page.getByRole('button', { name: /Release to send video circle/ })).toBeVisible()
   await circleButton.dispatchEvent('pointerup')
-  await expect(page.getByText('A quiet moment from the studio')).toBeVisible()
+  await expect(page.getByText('A quiet moment from the studio').last()).toBeVisible()
   await page.getByRole('button', { name: /Circle mode/ }).click()
   await page.getByRole('button', { name: /Voice mode/ }).dispatchEvent('pointerdown')
   await page.waitForTimeout(220)
   await page.getByRole('button', { name: /Release to send voice message/ }).dispatchEvent('pointerup')
-  await expect(page.getByText('0:08', { exact: true })).toBeVisible()
+  await expect(page.getByText('0:08', { exact: true }).last()).toBeVisible()
 
   await page.getByRole('button', { name: 'Open rich message tools' }).click()
   await page.getByText('Poll', { exact: true }).click()
   await page.getByRole('button', { name: 'Create poll' }).click()
-  await expect(page.getByText('Team sync at 15:00?', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: /Yes, works for me/ }).click()
+  await expect(page.getByText('Team sync at 15:00?', { exact: true }).last()).toBeVisible()
+  await page.getByRole('button', { name: /Yes, works for me/ }).last().click()
 
   await page.getByRole('button', { name: 'Open rich message tools' }).click()
   await page.getByText('Location', { exact: true }).click()
   await page.getByRole('button', { name: 'Share location' }).click()
-  await expect(page.getByText('Moscow Avenue · precise location')).toBeVisible()
+  await expect(page.getByText('Moscow Avenue · precise location').last()).toBeVisible()
 
   await page.getByRole('button', { name: 'Open rich message tools' }).click()
   await expect(page.getByText('Video circle', { exact: true })).toHaveCount(0)
@@ -148,7 +164,7 @@ test('my profile and saved messages target the signed-in account', async ({ page
 
   await page.getByRole('button', { name: 'Open main menu' }).click()
   await page.getByRole('button', { name: 'Saved Messages', exact: true }).click()
-  await expect(page.locator('.chat-row.active')).toContainText('Saved Messages')
+  await expect(page.locator('.chat-row.active').last()).toContainText('Saved Messages')
   await expect(page.getByText('Messages saved for yourself')).toBeVisible()
   await expect(page.locator('.messages .message')).toContainText('Remember to write this down.')
 })
@@ -156,11 +172,10 @@ test('my profile and saved messages target the signed-in account', async ({ page
 test('phone privacy Nobody removes the Mobile row for viewers', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop profile treatment')
   await page.goto('/')
-  await page.evaluate(() => {
-    const key = 'chettik-stage-2'
-    const data = JSON.parse(localStorage.getItem(key) || '{}')
-    data.profile = { ...data.profile, '+22222222222': { ...(data.profile?.['+22222222222'] || {}), privacy: { ...(data.profile?.['+22222222222']?.privacy || {}), phone: 'Nobody' } } }
-    localStorage.setItem(key, JSON.stringify(data))
+  await page.evaluate(async () => {
+    const auth = await fetch('http://127.0.0.1:8787/api/auth/otp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '+22222222222', code: '123456' }) })
+    const { token } = await auth.json()
+    await fetch('http://127.0.0.1:8787/api/me/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ privacy: { phone: 'Nobody' } }) })
   })
   await login(page, 'Nanda')
   await page.getByRole('button', { name: 'Open Mark profile' }).first().click()
@@ -186,7 +201,7 @@ test('profile, confirmations and chat context actions are interactive', async ({
   await expect(page.getByText('Copy text', { exact: true })).toBeVisible()
   await page.getByText('Forward', { exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Forward to' })).toBeVisible()
-  await page.getByText('Saved Messages', { exact: true }).click()
+  await page.getByRole('dialog', { name: 'Forward to' }).getByText('Saved Messages', { exact: true }).click()
 
   await page.getByRole('button', { name: 'Report message' }).first().click()
   await expect(page.getByRole('dialog', { name: 'Report message?' })).toBeVisible()
