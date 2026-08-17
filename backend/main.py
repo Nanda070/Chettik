@@ -12,8 +12,8 @@ from pathlib import Path
 
 import aiosmtplib
 from email.message import EmailMessage
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from backend.storage import configured_storage
 
@@ -30,21 +30,55 @@ logger = logging.getLogger("chettik")
 OTP_TTL = timedelta(minutes=10)
 OTP_MAX_ATTEMPTS = 5
 MEDIA_MAX_BYTES = int(os.getenv("MEDIA_MAX_BYTES", str(25 * 1024 * 1024)))
+MESSAGE_PAGE_SIZE = min(max(int(os.getenv("MESSAGE_PAGE_SIZE", "50")), 10), 200)
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMITS = {
+    "otp_request": int(os.getenv("RATE_LIMIT_OTP_REQUEST", "20")),
+    "otp_verify": int(os.getenv("RATE_LIMIT_OTP_VERIFY", "30")),
+    "message_send": int(os.getenv("RATE_LIMIT_MESSAGE_SEND", "40")),
+    "media_upload": int(os.getenv("RATE_LIMIT_MEDIA_UPLOAD", "10")),
+    "invite": int(os.getenv("RATE_LIMIT_INVITE", "10")),
+    "report": int(os.getenv("RATE_LIMIT_REPORT", "10")),
+}
 ALLOWED_MEDIA_TYPES = {
     "image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4",
     "video/webm", "audio/mpeg", "audio/ogg", "application/pdf", "text/plain",
 }
 
 DEFAULT_ORIGINS = "http://127.0.0.1:5173,http://localhost:5173"
+configured_origins = [origin.strip().rstrip("/") for origin in os.getenv("API_ALLOWED_ORIGINS", DEFAULT_ORIGINS).split(",") if origin.strip()]
+if not configured_origins or any(
+    origin == "*" or not origin.startswith(("http://127.0.0.1:", "http://localhost:"))
+    for origin in configured_origins
+):
+    raise RuntimeError("API_ALLOWED_ORIGINS must contain explicit localhost or 127.0.0.1 origins only")
 app = FastAPI(title="Chettik API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in os.getenv("API_ALLOWED_ORIGINS", DEFAULT_ORIGINS).split(",") if origin.strip()],
+    allow_origins=configured_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
-clients: set[WebSocket] = set()
+clients: dict[str, set[WebSocket]] = {}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", uid())
+    try:
+        response = await call_next(request)
+    except HTTPException as error:
+        response = JSONResponse({"error": {"code": f"HTTP_{error.status_code}", "message": str(error.detail), "requestId": request_id}}, status_code=error.status_code)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    if request.url.path.startswith("/api/auth/") or request.url.path == "/api/me/profile":
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @contextmanager
@@ -116,6 +150,14 @@ CREATE TABLE IF NOT EXISTS media_objects (id TEXT PRIMARY KEY, uploader_id TEXT 
 CREATE TABLE IF NOT EXISTS secret_chats (id TEXT PRIMARY KEY, user_a_id TEXT NOT NULL, user_b_id TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(user_a_id, user_b_id));
 CREATE TABLE IF NOT EXISTS secret_devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, public_key TEXT NOT NULL, label TEXT NOT NULL, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, UNIQUE(user_id, public_key));
 CREATE TABLE IF NOT EXISTS secret_messages (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, sender_id TEXT NOT NULL, sender_key_id TEXT NOT NULL, ciphertext TEXT NOT NULL, nonce TEXT NOT NULL, recipient_key_id TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, actor_id TEXT, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT, metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS rate_limits (scope TEXT NOT NULL, subject TEXT NOT NULL, window_started INTEGER NOT NULL, count INTEGER NOT NULL, PRIMARY KEY(scope, subject));
+CREATE TABLE IF NOT EXISTS message_reactions (message_id TEXT NOT NULL, user_id TEXT NOT NULL, emoji TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(message_id, user_id, emoji));
+CREATE TABLE IF NOT EXISTS message_pins (message_id TEXT PRIMARY KEY, pinned_by TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS message_receipts (message_id TEXT NOT NULL, user_id TEXT NOT NULL, read_at TEXT NOT NULL, PRIMARY KEY(message_id, user_id));
+CREATE TABLE IF NOT EXISTS chat_preferences (chat_id TEXT NOT NULL, user_id TEXT NOT NULL, muted_until TEXT, archived_at TEXT, PRIMARY KEY(chat_id, user_id));
+CREATE TABLE IF NOT EXISTS blocked_users (blocker_id TEXT NOT NULL, blocked_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(blocker_id, blocked_id));
+CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, reporter_id TEXT NOT NULL, message_id TEXT, reason TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL);
 """
 
 
@@ -125,6 +167,12 @@ def init(reset: bool = False):
             c.executescript(
                 """
                 PRAGMA foreign_keys = OFF;
+                DROP TABLE IF EXISTS audit_log;
+                DROP TABLE IF EXISTS rate_limits;
+                DROP TABLE IF EXISTS message_reactions;
+                DROP TABLE IF EXISTS message_pins;
+                DROP TABLE IF EXISTS message_receipts;
+                DROP TABLE IF EXISTS chat_preferences;
                 DROP TABLE IF EXISTS reports;
                 DROP TABLE IF EXISTS blocked_users;
                 DROP TABLE IF EXISTS attachments;
@@ -233,20 +281,66 @@ def current(auth: str | None):
     return row(user)
 
 
+def audit(connection: sqlite3.Connection, actor_id: str | None, action: str, target_type: str, target_id: str | None = None, **metadata):
+    connection.execute(
+        "INSERT INTO audit_log VALUES (?,?,?,?,?,?,?)",
+        (uid(), actor_id, action, target_type, target_id, json.dumps(metadata), now()),
+    )
+
+
+def enforce_rate_limit(connection: sqlite3.Connection, scope: str, subject: str):
+    limit = RATE_LIMITS[scope]
+    epoch = int(datetime.now(timezone.utc).timestamp())
+    window_started = epoch - (epoch % RATE_LIMIT_WINDOW_SECONDS)
+    found = connection.execute("SELECT window_started,count FROM rate_limits WHERE scope=? AND subject=?", (scope, subject)).fetchone()
+    if not found or found["window_started"] != window_started:
+        connection.execute(
+            "INSERT INTO rate_limits(scope,subject,window_started,count) VALUES (?,?,?,1) ON CONFLICT(scope,subject) DO UPDATE SET window_started=excluded.window_started,count=1",
+            (scope, subject, window_started),
+        )
+        return
+    if found["count"] >= limit:
+        retry_after = RATE_LIMIT_WINDOW_SECONDS - (epoch - window_started)
+        raise HTTPException(429, f"Too many requests. Try again in {retry_after} seconds.", headers={"Retry-After": str(retry_after)})
+    connection.execute("UPDATE rate_limits SET count=count+1 WHERE scope=? AND subject=?", (scope, subject))
+
+
+def require_chat_member(connection: sqlite3.Connection, chat_id: str, user_id: str):
+    if not connection.execute("SELECT 1 FROM chat_members WHERE chat_id=? AND user_id=?", (chat_id, user_id)).fetchone():
+        raise HTTPException(403, "Not a chat member")
+
+
+def message_with_state(connection: sqlite3.Connection, message: sqlite3.Row, user_id: str) -> dict:
+    data = row(message)
+    data["metadata"] = json.loads(data.pop("metadata_json") or "{}")
+    data["reactions"] = [row(item) for item in connection.execute("SELECT user_id,emoji FROM message_reactions WHERE message_id=? ORDER BY created_at", (data["id"],))]
+    data["pinned"] = bool(connection.execute("SELECT 1 FROM message_pins WHERE message_id=?", (data["id"],)).fetchone())
+    data["read"] = bool(connection.execute("SELECT 1 FROM message_receipts WHERE message_id=? AND user_id=?", (data["id"], user_id)).fetchone())
+    return data
+
+
 def public(user):
     return {k: user[k] for k in ("id", "name", "username", "role", "email", "initials", "color")} | {
         "badges": json.loads(user.get("badges_json") or "[]")
     }
 
 
-async def broadcast(payload: dict):
+async def broadcast(payload: dict, recipients: set[str] | None = None):
     dead = []
-    for socket in list(clients):
+    sockets = [
+        socket for user_id, owned in clients.items()
+        if recipients is None or user_id in recipients
+        for socket in owned
+    ]
+    for socket in sockets:
         try:
             await socket.send_json(payload)
         except Exception:
             dead.append(socket)
-    clients.difference_update(dead)
+    for user_id in list(clients):
+        clients[user_id].difference_update(dead)
+        if not clients[user_id]:
+            del clients[user_id]
 
 
 @app.get("/api/health")
@@ -254,22 +348,42 @@ def health():
     return {"ok": True, "storage": "sqlite", "runtime": "fastapi", "db": DB_PATH.name}
 
 
+@app.get("/api/ready")
+def ready():
+    try:
+        with db() as c:
+            c.execute("SELECT 1").fetchone()
+        MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+    except Exception as error:
+        logger.exception("Readiness check failed")
+        raise HTTPException(503, "Local storage is not ready") from error
+    return {"ok": True, "database": "ready", "media": "ready"}
+
+
 @app.post("/api/auth/otp/request")
 async def request_otp(body: dict):
     email = str(body.get("email", "")).lower().strip()
+    mode = str(body.get("mode", "login"))
     if not email or len(email) > 254:
         raise HTTPException(400, "Enter a valid email address")
+    if mode not in ("login", "signup"):
+        raise HTTPException(400, "Invalid authentication mode")
     expires = (datetime.now(timezone.utc) + OTP_TTL).isoformat()
     challenge = uid()
     dev_code = os.getenv("OTP_DEV_CODE")
     code = dev_code if dev_code else f"{secrets.randbelow(1_000_000):06d}"
     with db() as c:
-        if not c.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
+        enforce_rate_limit(c, "otp_request", email)
+        existing = c.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone()
+        if mode == "login" and not existing:
             raise HTTPException(404, "No Chettik account uses this email address")
+        if mode == "signup" and existing:
+            raise HTTPException(409, "An account already uses this email address. Sign in instead.")
         c.execute(
             "INSERT INTO otp_challenges (id, email, code_hash, expires_at, attempts, consumed_at) VALUES (?,?,?,?,0,NULL)",
             (challenge, email, hash_otp(challenge, code), expires),
         )
+        audit(c, None, "otp.requested", "account", email, mode=mode)
     if not dev_code:
         if not smtp_is_configured():
             with db() as c:
@@ -294,6 +408,7 @@ def verify_otp(body: dict):
     code = str(body.get("code", ""))
     challenge = body.get("challengeId")
     with db() as c:
+        enforce_rate_limit(c, "otp_verify", email)
         found = c.execute(
             "SELECT * FROM otp_challenges WHERE id=? AND email=? AND consumed_at IS NULL AND expires_at>?",
             (challenge, email, now()),
@@ -307,6 +422,30 @@ def verify_otp(body: dict):
             c.execute("UPDATE otp_challenges SET attempts=attempts+1 WHERE id=?", (found["id"],))
             raise HTTPException(401, "Incorrect or expired verification code")
         user = c.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        if not user:
+            name = str(body.get("name", "")).strip()
+            username = str(body.get("username", "")).strip().lstrip("@").lower()
+            if not (2 <= len(name) <= 80):
+                raise HTTPException(400, "Display name must be between 2 and 80 characters")
+            if not username.replace("_", "").isalnum() or not (3 <= len(username) <= 32):
+                raise HTTPException(400, "Username must be 3–32 lowercase letters, digits, or underscores")
+            if c.execute("SELECT 1 FROM users WHERE username=?", (f"@{username}",)).fetchone():
+                raise HTTPException(409, "That username is unavailable")
+            initials = "".join(part[0] for part in name.split() if part)[:2].upper() or "C"
+            color = "#4c8a83"
+            try:
+                c.execute(
+                    "INSERT INTO users VALUES (?,?,?,?,?,?,?, '[]')",
+                    (uid(), name, f"@{username}", "User", email, initials, color),
+                )
+            except sqlite3.IntegrityError:
+                raise HTTPException(409, "Email or username is already in use")
+            user = c.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+            c.execute("INSERT INTO profiles(user_id) VALUES (?)", (user["id"],))
+            saved = f"saved-{user['id']}"
+            c.execute("INSERT INTO chats VALUES (?, 'Saved Messages', 'saved')", (saved,))
+            c.execute("INSERT INTO chat_members VALUES (?,?)", (saved, user["id"]))
+            audit(c, user["id"], "account.created", "account", user["id"])
         token = secrets.token_urlsafe(32)
         expiry = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         c.execute("UPDATE otp_challenges SET consumed_at=? WHERE id=?", (now(), challenge))
@@ -314,6 +453,8 @@ def verify_otp(body: dict):
             "INSERT INTO sessions (token, user_id, created_at, expires_at, revoked_at) VALUES (?,?,?,?,NULL)",
             (token, user["id"], now(), expiry),
         )
+        audit(c, user["id"], "otp.verified", "session", token[:12])
+        audit(c, user["id"], "login", "session", token[:12])
     return {"token": token, "user": public(row(user)), "expiresAt": expiry}
 
 
@@ -323,6 +464,7 @@ def logout(authorization: str | None = Header(None)):
     if token:
         with db() as c:
             c.execute("UPDATE sessions SET revoked_at=? WHERE token=?", (now(), token))
+            audit(c, None, "session.revoked", "session", token[:12])
     return {"ok": True}
 
 
@@ -394,18 +536,22 @@ def direct(body: dict, authorization: str | None = Header(None)):
 
 
 @app.get("/api/chats/{chat_id}/messages")
-def get_messages(chat_id: str, authorization: str | None = Header(None)):
+def get_messages(chat_id: str, before: str | None = None, limit: int = MESSAGE_PAGE_SIZE, authorization: str | None = Header(None)):
     user = current(authorization)
+    limit = min(max(limit, 1), 200)
     with db() as c:
-        if not c.execute("SELECT 1 FROM chat_members WHERE chat_id=? AND user_id=?", (chat_id, user["id"])).fetchone():
-            raise HTTPException(403, "Not a chat member")
-        return [
-            row(x)
-            for x in c.execute(
-                "SELECT m.*,u.name sender_name FROM messages m JOIN users u ON u.id=m.sender_id WHERE chat_id=? ORDER BY created_at",
-                (chat_id,),
-            )
-        ]
+        require_chat_member(c, chat_id, user["id"])
+        where, params = "m.chat_id=?", [chat_id]
+        if before:
+            where += " AND m.created_at<?"
+            params.append(before)
+        values = c.execute(
+            f"SELECT m.*,u.name sender_name FROM messages m JOIN users u ON u.id=m.sender_id WHERE {where} ORDER BY m.created_at DESC LIMIT ?",
+            (*params, limit + 1),
+        ).fetchall()
+        has_more = len(values) > limit
+        page = values[:limit]
+        return {"items": [message_with_state(c, value, user["id"]) for value in reversed(page)], "nextBefore": page[-1]["created_at"] if has_more and page else None}
 
 
 @app.post("/api/chats/{chat_id}/messages")
@@ -415,9 +561,11 @@ async def post_message(chat_id: str, body: dict, authorization: str | None = Hea
     media_id = body.get("mediaId")
     if not text and not media_id:
         raise HTTPException(400, "Message text required")
+    if len(text) > 4000:
+        raise HTTPException(400, "Message text is too long")
     with db() as c:
-        if not c.execute("SELECT 1 FROM chat_members WHERE chat_id=? AND user_id=?", (chat_id, user["id"])).fetchone():
-            raise HTTPException(403, "Not a chat member")
+        enforce_rate_limit(c, "message_send", user["id"])
+        require_chat_member(c, chat_id, user["id"])
         channel = c.execute("SELECT id FROM channels WHERE chat_id=?", (chat_id,)).fetchone()
         if channel and not c.execute(
             "SELECT 1 FROM channel_members WHERE channel_id=? AND user_id=? AND role IN ('owner','admin')",
@@ -449,7 +597,9 @@ async def post_message(chat_id: str, body: dict, authorization: str | None = Hea
             "INSERT INTO messages (id,chat_id,sender_id,text,kind,metadata_json,media_id,media_mime,media_size,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (message["id"], chat_id, user["id"], text, message["kind"], json.dumps(message["metadata"]), message["media_id"], message["media_mime"], message["media_size"], message["created_at"]),
         )
-    await broadcast({"type": "message.created", "message": message})
+        audit(c, user["id"], "message.created", "message", message["id"], chat_id=chat_id)
+        recipients = {item["user_id"] for item in c.execute("SELECT user_id FROM chat_members WHERE chat_id=?", (chat_id,))}
+    await broadcast({"type": "message.created", "message": message}, recipients)
     return message
 
 
@@ -506,6 +656,7 @@ def add_group_member(group_id: str, body: dict, authorization: str | None = Head
 
 def invite(target_type: str, target_id: str, user: dict):
     with db() as c:
+        enforce_rate_limit(c, "invite", user["id"])
         existing = c.execute(
             "SELECT code FROM invite_links WHERE target_type=? AND target_id=?",
             (target_type, target_id),
@@ -516,6 +667,7 @@ def invite(target_type: str, target_id: str, user: dict):
                 "INSERT INTO invite_links VALUES (?,?,?,?,?,?)",
                 (uid(), target_type, target_id, code, user["id"], now()),
             )
+            audit(c, user["id"], "invite.generated", target_type, target_id)
     return {"code": code, "url": f"http://127.0.0.1:5173/join/{code}"}
 
 
@@ -644,6 +796,8 @@ async def upload_media(
     authorization: str | None = Header(None),
 ):
     user = current(authorization)
+    with db() as c:
+        enforce_rate_limit(c, "media_upload", user["id"])
     mime_type = (file.content_type or "").lower()
     if mime_type not in ALLOWED_MEDIA_TYPES:
         raise HTTPException(415, "Unsupported media type")
@@ -664,6 +818,7 @@ async def upload_media(
             "INSERT INTO media_objects VALUES (?,?,?,?,?,?,?)",
             (media_id, user["id"], storage_key, (file.filename or "upload")[:160], mime_type, len(content), now()),
         )
+        audit(c, user["id"], "media.uploaded", "media", media_id, mime_type=mime_type, byte_size=len(content))
     return {
         "id": media_id, "name": (file.filename or "upload")[:160], "mimeType": mime_type,
         "byteSize": len(content), "url": f"/api/media/{media_id}",
@@ -681,7 +836,11 @@ def download_media(media_id: str, authorization: str | None = Header(None)):
         ).fetchone()
     if not media or not allowed:
         raise HTTPException(404, "Media is unavailable")
-    headers = {"Content-Disposition": f'inline; filename="{media["name"].replace(chr(34), "")}"'}
+    headers = {
+        "Content-Disposition": f'inline; filename="{media["name"].replace(chr(34), "")}"',
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+    }
     return StreamingResponse(storage.open(media["storage_key"]), media_type=media["mime_type"], headers=headers)
 
 
@@ -812,10 +971,145 @@ def get_secret_messages(chat_id: str, deviceId: str, authorization: str | None =
 
 @app.websocket("/api/ws")
 async def websocket(socket: WebSocket):
+    token = socket.query_params.get("token") or socket.headers.get("authorization")
+    try:
+        user = current(token)
+    except HTTPException:
+        await socket.close(code=4401)
+        return
     await socket.accept()
-    clients.add(socket)
+    clients.setdefault(user["id"], set()).add(socket)
     try:
         while True:
             await socket.receive_text()
     except WebSocketDisconnect:
-        clients.discard(socket)
+        clients.get(user["id"], set()).discard(socket)
+        if not clients.get(user["id"]):
+            clients.pop(user["id"], None)
+
+
+def get_owned_message(connection: sqlite3.Connection, message_id: str, user_id: str) -> sqlite3.Row:
+    message = connection.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone()
+    if not message:
+        raise HTTPException(404, "Message not found")
+    require_chat_member(connection, message["chat_id"], user_id)
+    return message
+
+
+@app.patch("/api/messages/{message_id}")
+async def edit_message(message_id: str, body: dict, authorization: str | None = Header(None)):
+    user = current(authorization)
+    text = str(body.get("text", "")).strip()
+    if not text or len(text) > 4000:
+        raise HTTPException(400, "Message text must be between 1 and 4000 characters")
+    with db() as c:
+        message = get_owned_message(c, message_id, user["id"])
+        if message["sender_id"] != user["id"]:
+            raise HTTPException(403, "Only the sender can edit this message")
+        metadata = json.loads(message["metadata_json"] or "{}") | {"editedAt": now()}
+        c.execute("UPDATE messages SET text=?,metadata_json=? WHERE id=?", (text, json.dumps(metadata), message_id))
+        audit(c, user["id"], "message.edited", "message", message_id)
+        recipients = {item["user_id"] for item in c.execute("SELECT user_id FROM chat_members WHERE chat_id=?", (message["chat_id"],))}
+    await broadcast({"type": "message.updated", "message": {"id": message_id, "chat_id": message["chat_id"], "text": text}}, recipients)
+    return {"id": message_id, "text": text, "editedAt": metadata["editedAt"]}
+
+
+@app.delete("/api/messages/{message_id}")
+async def delete_message(message_id: str, authorization: str | None = Header(None)):
+    user = current(authorization)
+    with db() as c:
+        message = get_owned_message(c, message_id, user["id"])
+        if message["sender_id"] != user["id"]:
+            raise HTTPException(403, "Only the sender can delete this message")
+        recipients = {item["user_id"] for item in c.execute("SELECT user_id FROM chat_members WHERE chat_id=?", (message["chat_id"],))}
+        c.execute("DELETE FROM message_reactions WHERE message_id=?", (message_id,))
+        c.execute("DELETE FROM message_pins WHERE message_id=?", (message_id,))
+        c.execute("DELETE FROM message_receipts WHERE message_id=?", (message_id,))
+        c.execute("DELETE FROM messages WHERE id=?", (message_id,))
+        audit(c, user["id"], "message.deleted", "message", message_id)
+    await broadcast({"type": "message.deleted", "message": {"id": message_id, "chat_id": message["chat_id"]}}, recipients)
+    return {"ok": True}
+
+
+@app.post("/api/messages/{message_id}/reactions")
+def react_to_message(message_id: str, body: dict, authorization: str | None = Header(None)):
+    user = current(authorization)
+    emoji = str(body.get("emoji", "")).strip()
+    if not emoji or len(emoji) > 16:
+        raise HTTPException(400, "A short emoji reaction is required")
+    with db() as c:
+        get_owned_message(c, message_id, user["id"])
+        c.execute("INSERT OR IGNORE INTO message_reactions VALUES (?,?,?,?)", (message_id, user["id"], emoji, now()))
+    return {"ok": True}
+
+
+@app.post("/api/messages/{message_id}/pin")
+def pin_message(message_id: str, authorization: str | None = Header(None)):
+    user = current(authorization)
+    with db() as c:
+        get_owned_message(c, message_id, user["id"])
+        c.execute("INSERT INTO message_pins VALUES (?,?,?) ON CONFLICT(message_id) DO UPDATE SET pinned_by=excluded.pinned_by,created_at=excluded.created_at", (message_id, user["id"], now()))
+        audit(c, user["id"], "message.pinned", "message", message_id)
+    return {"ok": True}
+
+
+@app.post("/api/messages/{message_id}/read")
+def read_message(message_id: str, authorization: str | None = Header(None)):
+    user = current(authorization)
+    with db() as c:
+        get_owned_message(c, message_id, user["id"])
+        c.execute("INSERT OR REPLACE INTO message_receipts VALUES (?,?,?)", (message_id, user["id"], now()))
+    return {"ok": True}
+
+
+@app.patch("/api/chats/{chat_id}/preferences")
+def set_chat_preferences(chat_id: str, body: dict, authorization: str | None = Header(None)):
+    user = current(authorization)
+    muted_until = body.get("mutedUntil")
+    archived = bool(body.get("archived", False))
+    with db() as c:
+        require_chat_member(c, chat_id, user["id"])
+        c.execute(
+            "INSERT INTO chat_preferences(chat_id,user_id,muted_until,archived_at) VALUES (?,?,?,?) ON CONFLICT(chat_id,user_id) DO UPDATE SET muted_until=excluded.muted_until,archived_at=excluded.archived_at",
+            (chat_id, user["id"], muted_until, now() if archived else None),
+        )
+    return {"ok": True, "mutedUntil": muted_until, "archived": archived}
+
+
+@app.post("/api/messages/{message_id}/reports")
+def report_message(message_id: str, body: dict | None = None, authorization: str | None = Header(None)):
+    user = current(authorization)
+    with db() as c:
+        enforce_rate_limit(c, "report", user["id"])
+        get_owned_message(c, message_id, user["id"])
+        report_id = uid()
+        c.execute("INSERT INTO reports VALUES (?,?,?,?,?,?)", (report_id, user["id"], message_id, str((body or {}).get("reason", ""))[:500], "open", now()))
+        audit(c, user["id"], "message.reported", "message", message_id, report_id=report_id)
+    return {"id": report_id, "status": "open"}
+
+
+@app.post("/api/users/{user_id}/block")
+def block_user(user_id: str, authorization: str | None = Header(None)):
+    user = current(authorization)
+    if user_id == user["id"]:
+        raise HTTPException(400, "You cannot block yourself")
+    with db() as c:
+        if not c.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
+            raise HTTPException(404, "User not found")
+        c.execute("INSERT OR IGNORE INTO blocked_users VALUES (?,?,?)", (user["id"], user_id, now()))
+        audit(c, user["id"], "user.blocked", "user", user_id)
+    return {"ok": True}
+
+
+@app.get("/api/admin/audit")
+def audit_events(limit: int = 100, before: str | None = None, authorization: str | None = Header(None)):
+    user = current(authorization)
+    if user["role"] not in ("Admin", "SuperAdmin"):
+        raise HTTPException(403, "Local administrator access required")
+    limit = min(max(limit, 1), 200)
+    with db() as c:
+        values = c.execute(
+            "SELECT * FROM audit_log WHERE (? IS NULL OR created_at<?) ORDER BY created_at DESC LIMIT ?",
+            (before, before, limit),
+        ).fetchall()
+    return [row(value) | {"metadata": json.loads(value["metadata_json"])} for value in values]

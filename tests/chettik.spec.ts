@@ -1,15 +1,15 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 
 async function wipeInbox(request: APIRequestContext, email: string) {
-  const otp = await request.post('http://127.0.0.1:8787/api/auth/otp/request', { data: { email } })
+  const otp = await request.post('http://127.0.0.1:8788/api/auth/otp/request', { data: { email } })
   expect(otp.ok()).toBeTruthy()
   const { challengeId } = await otp.json()
-  const verify = await request.post('http://127.0.0.1:8787/api/auth/otp/verify', {
+  const verify = await request.post('http://127.0.0.1:8788/api/auth/otp/verify', {
     data: { email, code: '123456', challengeId, deviceLabel: 'Playwright' },
   })
   expect(verify.ok()).toBeTruthy()
   const { token } = await verify.json()
-  const reset = await request.post('http://127.0.0.1:8787/api/dev/reset-inbox', {
+  const reset = await request.post('http://127.0.0.1:8788/api/dev/reset-inbox', {
     headers: { Authorization: `Bearer ${token}` },
   })
   expect(reset.ok()).toBeTruthy()
@@ -23,9 +23,9 @@ async function login(page: Page, email = 'test@test.com') {
     await page.getByRole('button', { name: 'Log in using email' }).click()
   }
   await page.getByRole('textbox', { name: 'Email address' }).fill(email)
-  await page.getByRole('button', { name: /continue|продолжить/i }).click()
+  await page.getByRole('button', { name: /continue|Ð¿Ñ€Ð¾Ð´Ð¾Ð»Ð¶Ð¸Ñ‚ÑŒ/i }).click()
   await page.getByRole('textbox', { name: 'OTP digit 1' }).fill('123456')
-  await page.getByRole('button', { name: /sign in|verify|войти|подтвердить/i }).click()
+  await page.getByRole('button', { name: /sign in|verify|Ð²Ð¾Ð¹Ñ‚Ð¸|Ð¿Ð¾Ð´Ñ‚Ð²ÐµÑ€Ð´Ð¸Ñ‚ÑŒ/i }).click()
   await expect(page.locator('.app-shell')).toBeVisible()
 }
 
@@ -47,12 +47,28 @@ test('QR-first authentication is polished and exposes six OTP cells', async ({ p
     await page.getByRole('button', { name: 'Log in using email' }).click()
   }
   await page.getByRole('textbox', { name: 'Email address' }).fill('test@test.com')
-  await page.getByRole('button', { name: /continue|продолжить/i }).click()
+  await page.getByRole('button', { name: /continue|Ð¿Ñ€Ð¾Ð´Ð¾Ð»Ð¶Ð¸Ñ‚ÑŒ/i }).click()
   const cells = page.locator('.otp-cell:visible')
   await expect(cells).toHaveCount(6)
   await expect(cells.first()).toBeFocused()
   await cells.first().fill('123456')
   await expect(cells.nth(5)).toHaveValue('6')
+})
+
+test('browser creates a new email account after OTP ownership proof', async ({ page }, testInfo) => {
+  await page.goto('/')
+  await page.evaluate(() => localStorage.clear())
+  await page.goto('/')
+  if (testInfo.project.name === 'desktop') await page.getByRole('button', { name: 'Log in using email' }).click()
+  await page.getByRole('button', { name: /create account|ÑÐ¾Ð·Ð´Ð°Ñ‚ÑŒ Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚/i }).click()
+  const suffix = `${Date.now()}${testInfo.project.name === 'mobile' ? 'm' : 'd'}`
+  await page.getByRole('textbox', { name: 'Display name' }).fill(`Local ${suffix}`)
+  await page.getByRole('textbox', { name: 'Username' }).fill(`local_${suffix}`)
+  await page.getByRole('textbox', { name: 'Email address' }).fill(`local-${suffix}@example.test`)
+  await page.getByRole('button', { name: /continue|Ð¿Ñ€Ð¾Ð´Ð¾Ð»Ð¶Ð¸Ñ‚ÑŒ/i }).click()
+  await page.getByRole('textbox', { name: 'OTP digit 1' }).fill('123456')
+  await page.getByRole('button', { name: /sign in|verify|Ð²Ð¾Ð¹Ñ‚Ð¸|Ð¿Ð¾Ð´Ñ‚Ð²ÐµÑ€Ð´Ð¸Ñ‚ÑŒ/i }).click()
+  await expect(page.locator('.app-shell')).toBeVisible()
 })
 
 test('new inbox creates direct chats, groups, channels and messages', async ({ page, context, request }, testInfo) => {

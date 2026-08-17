@@ -13,6 +13,7 @@ dist-ssr
 *.local
 .env
 backend/media/
+backups/
 test-results/
 playwright-report/
 chettik.db
@@ -33,3 +34,7 @@ backend/__pycache__/
 *.njsproj
 *.sln
 *.sw?
+
+chettik.api-test.db
+chettik.api-test.db-shm
+chettik.api-test.db-wal

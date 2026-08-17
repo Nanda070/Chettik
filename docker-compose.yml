@@ -1,0 +1,36 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      CHETTIK_DB: /data/chettik.db
+      MEDIA_ROOT: /data/media
+      API_ALLOWED_ORIGINS: http://127.0.0.1:8080,http://localhost:8080
+      MEDIA_STORAGE: local
+      LOG_LEVEL: INFO
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - chettik-data:/data
+    ports:
+      - "127.0.0.1:8787:8787"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  chettik-data:

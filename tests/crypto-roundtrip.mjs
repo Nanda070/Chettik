@@ -10,4 +10,19 @@ const ciphertext = sodium.crypto_box_easy(plaintext, nonce, bob.publicKey, alice
 const opened = sodium.crypto_box_open_easy(ciphertext, nonce, alice.publicKey, bob.privateKey)
 
 assert.equal(new TextDecoder().decode(opened), 'Chettik secret message')
+
+const mallory = sodium.crypto_box_keypair()
+assert.throws(
+  () => sodium.crypto_box_open_easy(ciphertext, nonce, mallory.publicKey, bob.privateKey),
+  /wrong secret key|incorrect key pair|invalid|unable/i,
+)
+const tampered = new Uint8Array(ciphertext)
+tampered[0] ^= 1
+assert.throws(
+  () => sodium.crypto_box_open_easy(tampered, nonce, alice.publicKey, bob.privateKey),
+  /wrong secret key|incorrect key pair|invalid|unable/i,
+)
+const nonceTwo = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES)
+const ciphertextTwo = sodium.crypto_box_easy(plaintext, nonceTwo, bob.publicKey, alice.privateKey)
+assert.notDeepEqual(ciphertext, ciphertextTwo)
 console.log('libsodium secret-chat round trip passed')

@@ -2,3 +2,5 @@ fastapi
 uvicorn[standard]
 aiosmtplib
 python-multipart
+pytest
+httpx

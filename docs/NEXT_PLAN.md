@@ -1,16 +1,16 @@
 # Next development plan
 
-This checkpoint delivers an email-first SQLite messenger with API-backed profiles, devices, chats, channels, messages, and WebSocket updates. The following work remains before production use.
+This checkpoint delivers an email-first SQLite messenger with API-backed profiles, devices, chats, channels, messages, authenticated membership-scoped WebSocket updates, local audit events, rate limiting, Docker delivery, and backup tooling. The following work remains before public production use.
 
 ## Reliability and security
 
 1. ✅ Use SMTP email OTP with scrypt-hashed challenges, expiry, retry limits, and session revocation. `OTP_DEV_CODE` is an explicit CI/local-only override, never an SMTP failure fallback.
-2. Add password hashing, CSRF/CORS policy for deployed origins, audit logs, migrations, backups, and encrypted-at-rest secrets.
-3. Add authorization tests for every resource, especially direct-chat membership, blocks, reports, and device termination.
+2. ✅ Local-only CORS/security headers, audit logs, rate limits, backup/restore instructions, authenticated media, and authorization tests are present. Add deployed-origin CSRF policy, encryption at rest for server data, and a real migration framework before public deployment.
+3. Expand authorization tests to every administrative transition and independent security review coverage.
 
 ## Messaging
 
-1. Persist reactions, replies, forwards, pins, chat read state, mute/archive state, and attachments instead of their current UI-only behavior. Reactions and message pins now have SQLite/API persistence; replies, forwards, receipts, and chat state still need canonical server records.
+1. Reactions, pins, read receipts, and mute/archive state now have SQLite/API records. Finish canonical reply/forward records, thread semantics, and client synchronization for every advanced composer mode.
 2. Add pagination/cursor loading and virtualized rendering for large conversation histories.
 3. Add message search, delivery/read receipts, typing indicators, presence, and message edit/delete history.
 4. ✅ Store uploaded media behind authenticated local download URLs. Add object storage, virus scanning, retention rules, thumbnails, and a production upload pipeline.
@@ -29,5 +29,5 @@ This checkpoint delivers an email-first SQLite messenger with API-backed profile
 ## Delivery
 
 1. Add API integration tests, isolated SQLite test databases, deterministic seed/reset scripts, and CI.
-2. Containerize the app, add production configuration, structured logging, health checks, and observability.
+2. ✅ Local Compose, health/readiness, backup/cleanup scripts, and environment configuration are available. Add centralized observability and managed persistence for public deployment.
 3. Complete accessibility, localization, responsive-device, and performance audits before public release.

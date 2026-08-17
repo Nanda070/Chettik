@@ -108,3 +108,11 @@ export async function loadSecretHistory(chatId: string): Promise<SecretHistoryIt
 export async function saveSecretHistory(chatId: string, messages: SecretHistoryItem[]) {
   await put(HISTORY_STORE, chatId, await encryptAtRest(JSON.stringify(messages)))
 }
+
+/** A display-only comparison value for manual device verification, not a ratchet. */
+export async function safetyNumber(localPublicKey: string, peerPublicKey: string): Promise<string> {
+  await sodium.ready
+  const ordered = [localPublicKey, peerPublicKey].sort().join(':')
+  const digest = sodium.crypto_generichash(30, new TextEncoder().encode(`chettik-safety-v1:${ordered}`), null)
+  return Array.from(digest, byte => String(byte).padStart(3, '0')).join(' ').replace(/(.{47})/g, '$1\n').trim()
+}

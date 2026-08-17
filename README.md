@@ -2,6 +2,8 @@
 
 A local-first messenger with email OTP, direct conversations, groups, channels, SQLite persistence, and WebSocket delivery.
 
+For the complete localhost security, Docker, backup, restore, and limitation guide, see [docs/LOCAL_READINESS.md](docs/LOCAL_READINESS.md).
+
 ## Start locally
 
 ```powershell
@@ -35,6 +37,8 @@ SMTP and is never a production fallback. The seeded addresses are `test@test.com
 
 After signing in, use **New chat**, **New group**, or **New channel**. Direct chats, groups, channels, and messages are stored in SQLite.
 
+The browser email screen also supports **Create account**: enter a new email, receive an OTP, then choose a display name and unique username. SMTP is used whenever it is configured; `OTP_DEV_CODE` is only for isolated local/CI testing.
+
 ## Secret chats
 
 Secret chats are device-bound and use `libsodium-wrappers-sumo`: X25519 key agreement
@@ -67,6 +71,8 @@ npm run preview -- --host 127.0.0.1
 
 ```powershell
 npm run build
+npm run test:api
+npm run test:crypto
 npm run test:e2e
 ```
 

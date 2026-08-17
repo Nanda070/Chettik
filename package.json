@@ -10,8 +10,10 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "test:api": "python -m pytest tests/api",
     "test:e2e": "playwright test",
-    "test:crypto": "node tests/crypto-roundtrip.mjs"
+    "test:crypto": "node tests/crypto-roundtrip.mjs",
+    "test": "npm run test:api && npm run test:crypto && npm run test:e2e"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

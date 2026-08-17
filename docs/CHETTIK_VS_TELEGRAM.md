@@ -12,7 +12,7 @@ This is an honest implementation checkpoint, not a claim of feature parity or pr
 | Voice / circles | Recorded media with streaming and playback | Composer UI placeholders | Native media encoding/playback | Message-kind UI | No real audio/video capture or playback |
 | View-once / timed | Receiver-enforced cloud/secret timers | View-once, 3/10/30s metadata and local expiry UI | Protocol/client enforcement plus server metadata | Cloud metadata, local receiver UI state | No cross-device view synchronization or hardened expiry |
 | Stickers / packs | Curated and user packs, sharing, analytics | PNG/WebP/GIF upload, packs, install endpoint, picker and messages | Pack CDN and Telegram pack identifiers | SQLite pack/sticker records; embedded data URLs | No reorder UI, share-link UI, moderation or conversion; HEIC unsupported |
-| Secret chats | Device-bound E2E with key exchange | Device-bound encrypted secret chats | MTProto secret-chat protocol | libsodium X25519 `crypto_box`; public-key signaling and opaque server envelopes; AES-GCM-encrypted IndexedDB device history | No ratchet/forward secrecy, verification UI, recovery, multi-device sync or independent audit |
+| Secret chats | Device-bound E2E with key exchange | Device-bound encrypted secret chats with safety numbers | MTProto secret-chat protocol | libsodium X25519 `crypto_box`; public-key signaling and opaque server envelopes; AES-GCM-encrypted IndexedDB device history | No ratchet/forward secrecy, recovery, multi-device sync or independent audit |
 | Privacy | Granular server policy and block lists | Profile privacy, blocks and local auto-delete controls | Mature policy system | SQLite profiles/settings | Exceptions and enforcement are incomplete |
 | Devices | Session list, QR devices, terminate sessions | Current device list and terminate-other-sessions | Cross-device authorization service | Revocable SQLite sessions, dedupe by device identity | No real QR pairing or passkey management |
 | Profiles / badges | Usernames, identity and Premium badges | Profiles, social links and persisted demo badge catalog | Account profile service | SQLite users/profiles/badges JSON | Badge issuance is seed/demo only |
@@ -25,7 +25,7 @@ This is an honest implementation checkpoint, not a claim of feature parity or pr
 
 ## Security and production readiness
 
-Chettik has SMTP OTP/session controls, authenticated media access checks, and a constrained device-bound E2E implementation. It still needs deployed-origin CSRF/CORS policy, audit logs, backups, malware scanning, secure object storage, authorization integration tests, a ratchet/identity verification/recovery design, and an external security review before public use.
+Chettik has local-only CORS/security headers, SMTP OTP/session controls, authenticated media access checks, local audit logs/backups, rate limits, authorization tests, and a constrained device-bound E2E implementation with manual safety numbers. It still needs deployed-origin CSRF/CORS policy, malware scanning, secure object storage, a ratchet/recovery design, and an external security review before public use.
 
 ## Product conclusion
 
