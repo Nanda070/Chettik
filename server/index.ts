@@ -292,7 +292,7 @@ app.post('/api/channels', (request, response) => {
       db.prepare("INSERT INTO channel_members (channel_id, user_id, role) VALUES (?, ?, 'owner')").run(channelId, user.id)
     })()
   } catch { return response.status(409).json({ error: 'That public handle is unavailable' }) }
-  response.status(201).json({ id: channelId, title: title.trim(), description, username: visibility === 'public' ? handle : null, visibility, chatId, subscriber_count: 1, my_role: 'owner' })
+  response.status(201).json({ id: channelId, title: title.trim(), description, username: visibility === 'public' ? handle : null, visibility, owner_id: user.id, chat_id: chatId, subscriber_count: 1, my_role: 'owner' })
 })
 app.patch('/api/channels/:channelId', (request, response) => {
   const user = requireSession(request, response); if (!user) return

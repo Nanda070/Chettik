@@ -29,6 +29,24 @@ test('seed account sends and edits inside the composer', async ({ page }) => {
   await expect(page.getByText('Edited without browser dialogs').last()).toBeVisible()
 })
 
+test('email admin creates, opens and posts to a channel', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Channel creation uses the desktop menu')
+  await login(page, 'Nanda')
+  await page.getByRole('button', { name: 'Open main menu' }).click()
+  await page.getByRole('button', { name: 'New Channel', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'New Channel' })).toBeVisible()
+  const handle = `channel_${Date.now()}`
+  await page.getByRole('textbox', { name: 'Channel name' }).fill('Product Notes')
+  await page.getByRole('textbox', { name: 'Channel description' }).fill('Focused releases and product updates.')
+  await page.getByRole('textbox', { name: 'Channel handle' }).fill(handle)
+  await page.getByRole('button', { name: 'Create channel' }).click()
+  await expect(page.getByRole('button', { name: 'Open channel info' }).first()).toBeVisible()
+  await expect(page.getByText('Product Notes', { exact: true }).first()).toBeVisible()
+  await page.getByRole('textbox', { name: 'Message text' }).fill('The first channel post.')
+  await page.getByRole('button', { name: 'Publish post' }).click()
+  await expect(page.getByText('The first channel post.', { exact: true }).last()).toBeVisible()
+})
+
 test('group info, editing and chat linking are interactive', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile')
   await login(page)
@@ -207,7 +225,7 @@ test('profile, confirmations and chat context actions are interactive', async ({
   await page.locator('.sidebar .chat-row').first().click({ button: 'right' })
   await expect(page.getByRole('menu')).toBeVisible()
   await page.getByText('Pin', { exact: true }).click()
-  await expect(page.locator('.sidebar .chat-row svg')).toHaveCount(1)
+  await expect(page.locator('.sidebar .chat-row .chat-name svg')).toHaveCount(1)
   await page.locator('.message').first().click({ button: 'right' })
   await expect(page.getByText('Copy text', { exact: true })).toBeVisible()
   await page.getByText('Forward', { exact: true }).click()
