@@ -340,10 +340,27 @@ app.get('/api/users/:userId/profile', (request, response) => {
 })
 app.get('/api/me/devices', (request, response) => {
   const user = requireSession(request, response); if (!user) return
-  response.json(db.prepare('SELECT * FROM devices WHERE user_id = ? ORDER BY last_seen DESC').all(user.id))
+  const token = request.header('authorization')?.replace('Bearer ', '')
+  const current = db.prepare("SELECT device_id FROM sessions WHERE token = ? AND user_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))").get(token, user.id) as { device_id: string | null } | undefined
+  response.json(db.prepare(`
+    SELECT d.*, d.id = ? AS is_current
+    FROM devices d
+    WHERE d.user_id = ?
+      AND EXISTS (
+        SELECT 1 FROM sessions s
+        WHERE s.device_id = d.id
+          AND s.user_id = d.user_id
+          AND s.revoked_at IS NULL
+          AND (s.expires_at IS NULL OR s.expires_at > datetime('now'))
+      )
+    ORDER BY is_current DESC, d.last_seen DESC
+  `).all(current?.device_id || '', user.id))
 })
 app.delete('/api/me/devices/:deviceId', (request, response) => {
   const user = requireSession(request, response); if (!user) return
+  const token = request.header('authorization')?.replace('Bearer ', '')
+  const current = db.prepare('SELECT device_id FROM sessions WHERE token = ? AND user_id = ?').get(token, user.id) as { device_id: string | null } | undefined
+  if (current?.device_id === request.params.deviceId) return response.status(400).json({ error: 'The current session cannot be terminated here' })
   const deleted = db.prepare('DELETE FROM devices WHERE id = ? AND user_id = ?').run(request.params.deviceId, user.id)
   if (!deleted.changes) return response.status(404).json({ error: 'Device not found' })
   db.prepare("UPDATE sessions SET revoked_at = datetime('now') WHERE device_id = ? AND user_id = ?").run(request.params.deviceId, user.id)
@@ -352,8 +369,24 @@ app.delete('/api/me/devices/:deviceId', (request, response) => {
 app.post('/api/me/sessions/revoke-others', (request, response) => {
   const user = requireSession(request, response); if (!user) return
   const token = request.header('authorization')?.replace('Bearer ', '')
-  db.prepare("UPDATE sessions SET revoked_at = datetime('now') WHERE user_id = ? AND token != ? AND revoked_at IS NULL").run(user.id, token)
-  response.status(204).end()
+  const current = db.prepare("SELECT device_id FROM sessions WHERE token = ? AND user_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > datetime('now'))").get(token, user.id) as { device_id: string | null } | undefined
+  if (!current) return response.status(401).json({ error: 'Authentication required' })
+  const revokeOthers = db.transaction(() => {
+    const revoked = db.prepare("UPDATE sessions SET revoked_at = datetime('now') WHERE user_id = ? AND token != ? AND revoked_at IS NULL").run(user.id, token)
+    db.prepare(`
+      DELETE FROM devices
+      WHERE user_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM sessions
+          WHERE sessions.device_id = devices.id
+            AND sessions.user_id = devices.user_id
+            AND sessions.revoked_at IS NULL
+            AND (sessions.expires_at IS NULL OR sessions.expires_at > datetime('now'))
+        )
+    `).run(user.id)
+    return revoked.changes
+  })
+  response.json({ revokedSessions: revokeOthers(), currentDeviceId: current.device_id })
 })
 app.get('/api/chats/:chatId/messages', (request, response) => {
   const user = requireSession(request, response); if (!user) return

@@ -1,20 +1,44 @@
 import { expect, test } from '@playwright/test'
 
 async function login(page: import('@playwright/test').Page, name: 'Nanda' | 'Mark' | 'Alisher' = 'Nanda') {
+  const emails = { Nanda: 'test@test.com', Mark: 'test2@test.com', Alisher: 'test3@test.com' }
   await page.goto('/')
   if (await page.getByRole('heading', { name: 'Scan From Mobile Chettik' }).isVisible()) {
     await page.getByRole('button', { name: 'Log in using email' }).click()
-    await page.getByRole('button', { name, exact: true }).click()
-    await page.getByRole('textbox', { name: 'Desktop OTP' }).fill('123456')
+    await page.getByRole('textbox', { name: 'Email address' }).fill(emails[name])
+    await page.getByRole('button', { name: 'Next' }).click()
+    await page.getByRole('textbox', { name: 'OTP digit 1' }).fill('123456')
     await page.getByRole('button', { name: 'Sign in' }).click()
     await expect(page.locator('.chat-head .chat-person strong')).toBeVisible()
     return
   }
-  await page.getByRole('button', { name: new RegExp(name) }).click()
-  await page.getByPlaceholder('••••••').fill('123456')
+  await page.getByRole('textbox', { name: 'Email address' }).fill(emails[name])
+  await page.getByRole('button', { name: /continue|продолжить/i }).click()
+  await page.getByRole('textbox', { name: 'OTP digit 1' }).fill('123456')
   await page.getByRole('button', { name: /verify|подтвердить/i }).click()
   await expect(page.locator('.chat-head .chat-person strong')).toBeVisible()
 }
+
+test('QR-first login has no demos and exposes six visible OTP cells', async ({ page }, testInfo) => {
+  await page.goto('/')
+  if (testInfo.project.name === 'desktop') {
+    await expect(page.getByRole('heading', { name: 'Scan From Mobile Chettik' })).toBeVisible()
+    await expect(page.locator('.desktop-qr')).toBeVisible()
+    await page.getByRole('button', { name: 'Log in using email' }).click()
+  }
+  await expect(page.getByText(/Nanda|Mark|Alisher/)).toHaveCount(0)
+  await expect(page.getByText(/six-digit verification code/i)).toHaveCount(0)
+  await page.getByRole('textbox', { name: 'Email address' }).fill('test@test.com')
+  await page.getByRole('button', { name: /next|continue|продолжить/i }).click()
+  const cells = page.locator('.otp-cell:visible')
+  await expect(cells).toHaveCount(6)
+  await expect(cells.first()).toBeFocused()
+  await cells.first().fill('12')
+  await expect(cells.nth(0)).toHaveValue('1')
+  await expect(cells.nth(1)).toHaveValue('2')
+  await cells.nth(2).fill('3456')
+  await expect(cells.nth(5)).toHaveValue('6')
+})
 
 test('seed account sends and edits inside the composer', async ({ page }) => {
   await login(page)
@@ -98,6 +122,26 @@ test('settings privacy, devices, language and theme work', async ({ page }, test
   await page.getByRole('button', { name: 'Back' }).click()
   await page.getByText('Language', { exact: true }).click()
   await expect(page.locator('.tg-panel-head strong')).toHaveText('Settings')
+})
+
+test('terminates every other active session and refreshes devices', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Devices screen is covered in desktop settings')
+  await login(page, 'Nanda')
+  const otherToken = await page.evaluate(async () => {
+    const requested = await fetch('http://127.0.0.1:8787/api/auth/otp/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'test@test.com' }) })
+    const { challengeId } = await requested.json()
+    const verified = await fetch('http://127.0.0.1:8787/api/auth/otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'test@test.com', code: '123456', challengeId, deviceLabel: 'Playwright other device' }) })
+    return (await verified.json() as { token: string }).token
+  })
+  await page.getByRole('button', { name: 'Open main menu' }).click()
+  await page.locator('.main-menu').getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByText('Devices', { exact: true }).click()
+  await expect(page.getByText('Playwright other device', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Terminate other sessions' }).click()
+  await page.getByRole('dialog', { name: 'Terminate other sessions?' }).getByRole('button', { name: 'Terminate', exact: true }).click()
+  await expect(page.getByText('Other sessions have been terminated.')).toBeVisible()
+  await expect(page.getByText('Playwright other device', { exact: true })).toHaveCount(0)
+  await expect.poll(() => page.evaluate(async token => (await fetch('http://127.0.0.1:8787/api/chats', { headers: { Authorization: `Bearer ${token}` } })).status, otherToken)).toBe(401)
 })
 
 test('admin and legal flows are reachable for permitted roles', async ({ page }, testInfo) => {
