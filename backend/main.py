@@ -19,10 +19,11 @@ for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines() if (ROOT / 
 DB_PATH = ROOT / os.getenv("CHETTIK_DB", "chettik.db")
 OTP_CODE = os.getenv("OTP_DEV_CODE", "123456")
 
+DEFAULT_ORIGINS = "http://127.0.0.1:5173,http://localhost:5173"
 app = FastAPI(title="Chettik API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in os.getenv("API_ALLOWED_ORIGINS", "http://127.0.0.1:5173").split(",") if origin.strip()],
+    allow_origins=[origin.strip() for origin in os.getenv("API_ALLOWED_ORIGINS", DEFAULT_ORIGINS).split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -100,6 +101,23 @@ def init(reset: bool = False):
                 """
             )
         c.executescript(SCHEMA)
+        # Express schemas differ (extra columns). Recreate drifted auth tables in place.
+        for table, ddl, expected in (
+            (
+                "otp_challenges",
+                "CREATE TABLE otp_challenges (id TEXT PRIMARY KEY, email TEXT NOT NULL, expires_at TEXT NOT NULL, consumed_at TEXT)",
+                {"id", "email", "expires_at", "consumed_at"},
+            ),
+            (
+                "sessions",
+                "CREATE TABLE sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, revoked_at TEXT)",
+                {"token", "user_id", "created_at", "expires_at", "revoked_at"},
+            ),
+        ):
+            cols = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
+            if cols and cols != expected:
+                c.execute(f"DROP TABLE {table}")
+                c.execute(ddl)
         seeds = [
             ("nanda", "Nanda", "@nanda", "SuperAdmin", "test@test.com", "N", "#9e2338"),
             ("mark", "Mark", "@mark", "Admin", "test2@test.com", "M", "#6e4c97"),
@@ -188,7 +206,10 @@ def request_otp(body: dict):
             raise HTTPException(404, "No Chettik account uses this email address")
         challenge = uid()
         expires = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
-        c.execute("INSERT INTO otp_challenges VALUES (?,?,?,NULL)", (challenge, email, expires))
+        c.execute(
+            "INSERT INTO otp_challenges (id, email, expires_at, consumed_at) VALUES (?,?,?,NULL)",
+            (challenge, email, expires),
+        )
     return {"challengeId": challenge, "expiresAt": expires, "delivery": "email"}
 
 
@@ -208,7 +229,10 @@ def verify_otp(body: dict):
         token = secrets.token_urlsafe(32)
         expiry = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         c.execute("UPDATE otp_challenges SET consumed_at=? WHERE id=?", (now(), challenge))
-        c.execute("INSERT INTO sessions VALUES (?,?,?,?,NULL)", (token, user["id"], now(), expiry))
+        c.execute(
+            "INSERT INTO sessions (token, user_id, created_at, expires_at, revoked_at) VALUES (?,?,?,?,NULL)",
+            (token, user["id"], now(), expiry),
+        )
     return {"token": token, "user": public(row(user)), "expiresAt": expiry}
 
 

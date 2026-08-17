@@ -68,8 +68,8 @@ export default function Chettik() {
     setAuthPending(true)
     try {
       const response = await fetch(`${API_URL}/auth/otp/request`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail }) })
-      const payload = await response.json() as { challengeId?: string; error?: string }
-      if (!response.ok || !payload.challengeId) return setAuthNotice(payload.error || tr.invalid)
+      const payload = await response.json().catch(() => ({})) as { challengeId?: string; error?: string; detail?: string }
+      if (!response.ok || !payload.challengeId) return setAuthNotice(payload.error || (typeof payload.detail === 'string' ? payload.detail : '') || tr.invalid)
       setEmail(normalizedEmail)
       setOtp('')
       setOtpChallengeId(payload.challengeId)
@@ -86,8 +86,8 @@ export default function Chettik() {
     setAuthPending(true)
     try {
       const response = await fetch(`${API_URL}/auth/otp/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: picked.email, code: otp, challengeId: otpChallengeId, deviceLabel: 'Web • Browser' }) })
-      const payload = await response.json() as { token?: string; user?: Account; error?: string }
-      if (!response.ok || !payload.token || !payload.user) return setAuthNotice(payload.error || tr.code)
+      const payload = await response.json().catch(() => ({})) as { token?: string; user?: Account; error?: string; detail?: string }
+      if (!response.ok || !payload.token || !payload.user) return setAuthNotice(payload.error || (typeof payload.detail === 'string' ? payload.detail : '') || tr.code)
       localStorage.setItem(sessionKey(payload.user), payload.token)
       setAuthNotice('')
       setSession(payload.user)
