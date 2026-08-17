@@ -16,6 +16,10 @@ playwright-report/
 chettik.db
 chettik.db-shm
 chettik.db-wal
+chettik.e2e.db
+chettik.e2e.db-shm
+chettik.e2e.db-wal
+backend/__pycache__/
 
 # Editor directories and files
 .vscode/*
