@@ -1,6 +1,6 @@
 # Chettik
 
-Privacy-first messenger with a dark-red identity and Telegram-inspired desktop/mobile shells. The foundation uses a Node API, SQLite persistence, email OTP sessions, broadcast channels, and WebSocket message broadcasts.
+Privacy-first messenger with a neutral interface and dark-red accent. Chettik uses a React client, Node API, SQLite persistence, email OTP sessions, channels, and WebSocket message delivery.
 
 ## Run locally
 
@@ -11,9 +11,9 @@ npm run dev
 
 This starts the API at `http://127.0.0.1:8787` and Vite at `http://127.0.0.1:5173`.
 
-## Local sign-in
+## Email sign-in
 
-Enter a seeded email address, request a verification code, then enter the configured `OTP_DEV_CODE` (defaults to `123456`). In local development the email-provider boundary logs delivery server-side.
+Enter an email address, request a verification code, then enter the configured `OTP_DEV_CODE` (defaults to `123456`). The development email-provider boundary logs delivery server-side. The included local accounts are available for development and end-to-end tests:
 
 | Role | Name | Username | Email |
 | --- | --- | --- | --- |
@@ -21,11 +21,35 @@ Enter a seeded email address, request a verification code, then enter the config
 | Admin | Mark | @mark | test2@test.com |
 | User | Alisher | @alisher | test3@test.com |
 
-## Real foundation
+## Production client build
+
+```powershell
+npm run build
+npm run preview -- --host 0.0.0.0
+```
+
+`dist/` is a deployable SPA. Build it with the API address for its deployment environment:
+
+```powershell
+$env:VITE_API_URL = "https://api.example.com/api"
+npm run build
+```
+
+The API must permit the client origin and be reachable from the browser:
+
+```powershell
+$env:API_HOST = "0.0.0.0"
+$env:API_ALLOWED_ORIGINS = "https://app.example.com"
+npm run dev:api
+```
+
+Put both services behind TLS in production and replace the development OTP provider with an audited transactional email provider.
+
+## Application foundation
 
 - `server/index.ts` provides Express endpoints for health, email OTP challenges, sessions, channels, chat reads, search, and message writes.
 - SQLite stores users, sessions, chats, memberships, messages, devices, and privacy settings. The local database is `chettik.db` and is intentionally gitignored.
-- The seeded Nanda, Mark, and Alisher accounts are inserted on API startup.
+- The local Nanda, Mark, and Alisher accounts are inserted on API startup for development and tests.
 - OTP requests are email-first, hashed before storage, expire after ten minutes, allow five verification attempts, and are rate-limited by email and IP. Sessions expire after 30 days and are revoked on logout or device termination.
 - The frontend obtains a session token after sign-in, reads the Nanda–Mark thread from the API, posts new messages there, and listens for `message.created` WebSocket broadcasts.
 - The development email OTP provider logs delivery locally and uses `OTP_DEV_CODE` (default `123456`). Replace this provider with an audited transactional email provider before deployment.
@@ -43,6 +67,7 @@ The generated product logo is at [public/logo.svg](public/logo.svg), used for th
 
 ```powershell
 npm run build
+npm run test:e2e
 ```
 
 ---

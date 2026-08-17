@@ -237,6 +237,38 @@ test('profile, confirmations and chat context actions are interactive', async ({
   await expect(page.locator('.messages .message').filter({ hasText: 'I tried the new onboarding flow.' })).toBeVisible()
 })
 
+test('non-Mark chats support context menus, sidebar resize, and outside dismissal', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop context menus and resize handle')
+  await login(page)
+
+  const savedMessages = page.locator('.sidebar .chat-row').filter({ hasText: 'Saved Messages' })
+  await savedMessages.click({ button: 'right' })
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.locator('.floating-dismiss').click({ position: { x: 8, y: 8 } })
+  await expect(page.getByRole('menu')).toHaveCount(0)
+
+  await savedMessages.click()
+  await page.locator('.messages .message').first().click({ button: 'right' })
+  await expect(page.getByText('Copy text', { exact: true })).toBeVisible()
+  await page.locator('.floating-dismiss').click({ position: { x: 8, y: 8 } })
+  await expect(page.getByText('Copy text', { exact: true })).toHaveCount(0)
+
+  const sidebar = page.locator('.sidebar')
+  const before = (await sidebar.boundingBox())!.width
+  const handle = page.locator('.sidebar-resizer')
+  const handleBox = (await handle.boundingBox())!
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 120)
+  await page.mouse.down()
+  await page.mouse.move(handleBox.x + 70, handleBox.y + 120, { steps: 8 })
+  await page.mouse.up()
+  await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeGreaterThan(before)
+
+  await page.getByRole('button', { name: 'Open emoji picker' }).click()
+  await expect(page.locator('.emoji-picker')).toBeVisible()
+  await page.locator('.chat-head').click()
+  await expect(page.locator('.emoji-picker')).toHaveCount(0)
+})
+
 test('starts a device-local secret chat and selects timed media', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop profile treatment')
   await login(page)

@@ -67,7 +67,7 @@ export function DeliveryPanel({ language, enabled, telemetry, onChange, onClose 
     <aside className="tg-panel delivery-panel"><header className="tg-panel-head"><button className="icon-btn" aria-label="Close settings" onClick={onClose}><X size={21} /></button><strong>{ru ? 'Доставка и приватность' : 'Delivery and privacy'}</strong></header>
       <div className="delivery-intro"><span><BellRing size={19} /></span><h3>{ru ? 'Спокойно. Только важное.' : 'Quiet. Only what matters.'}</h3><p>{ru ? 'Настройте доставку без рекламного профилирования и скрытого отслеживания.' : 'Control delivery without advertising profiles or hidden tracking.'}</p></div>
       <div className="tg-list">{rows.map(row => <button className="tg-row" key={row.key} onClick={() => onChange({ [row.key]: !row.value })}><span className="tg-row-icon">{row.icon}</span><span className="tg-row-copy"><strong>{row.title}</strong><small>{row.hint}</small></span><span className={`switch ${row.value ? 'on' : ''}`} aria-label={`${row.title}: ${row.value ? 'on' : 'off'}`}><i /></span></button>)}</div>
-      <p className="delivery-note"><EyeOff size={15} />{ru ? 'Push-ключ и метаданные уведомлений остаются только на вашем устройстве в этой локальной PWA-демонстрации.' : 'The push key and notification metadata stay on this device in this local PWA demonstration.'}</p>
+      <p className="delivery-note"><EyeOff size={15} />{ru ? 'Push-ключ и метаданные уведомлений остаются только на вашем устройстве.' : 'Push keys and notification metadata remain only on this device.'}</p>
     </aside>
   </div>
 }

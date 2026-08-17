@@ -1,6 +1,7 @@
 import { Archive, ArrowLeft, BellOff, Check, ChevronRight, Clock3, Copy, Edit3, FileText, Forward, Lock, MessageCircle, MoreHorizontal, Pin, Search, Send, Share2, Trash2, UserRound, VolumeX, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { Account, ChatName } from './Chettik'
+import { API_URL } from './api'
 
 export type ConfirmAction = 'report' | 'block' | 'delete-message' | 'delete-chat' | 'clear-history'
 
@@ -29,8 +30,8 @@ export function ConfirmModal({ action, name, onClose, onConfirm }: { action: Con
     'clear-history': ['Clear history?', 'Messages in this local chat will be cleared. This cannot be undone.', 'Clear', false],
   }
   const [title, body, destructive, checkbox] = copy[action]
-  return <div className="confirm-backdrop" role="dialog" aria-modal="true" aria-label={title}>
-    <div className="confirm-card"><h2>{title}</h2><p>{body}</p>{checkbox && <label className="confirm-check"><input type="checkbox" checked={alsoDelete} onChange={event => setAlsoDelete(event.target.checked)} /><span>Also delete for {name}</span></label>}<div className="confirm-actions"><button onClick={onClose}>Cancel</button><button className="destructive" onClick={() => onConfirm(alsoDelete)}>{destructive}</button></div></div>
+  return <div className="confirm-backdrop" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
+    <div className="confirm-card" onClick={event => event.stopPropagation()}><h2>{title}</h2><p>{body}</p>{checkbox && <label className="confirm-check"><input type="checkbox" checked={alsoDelete} onChange={event => setAlsoDelete(event.target.checked)} /><span>Also delete for {name}</span></label>}<div className="confirm-actions"><button onClick={onClose}>Cancel</button><button className="destructive" onClick={() => onConfirm(alsoDelete)}>{destructive}</button></div></div>
   </div>
 }
 
@@ -58,7 +59,6 @@ export function GroupPanel({ token, chats, onClose }: { token: string; chats: Ar
   const [description, setDescription] = useState('')
   const [search, setSearch] = useState('')
   const [moreOpen, setMoreOpen] = useState(false)
-  const API_URL = 'http://127.0.0.1:8787/api'
   useEffect(() => {
     fetch(`${API_URL}/groups`, { headers: { Authorization: `Bearer ${token}` } }).then(response => response.json()).then((items: GroupRecord[]) => {
       const current = items.find(item => item.id === 'design-circle') || items[0]
@@ -100,12 +100,12 @@ function SharedGallery({ kind, onBack, onClose }: { kind: 'photos' | 'files' | '
   </div>
 }
 
-export function ChatContextMenu({ pinned, muted, onAction }: { name: string; pinned: boolean; muted: boolean; onAction: (action: string) => void }) {
+export function ChatContextMenu({ pinned, muted, onAction, style }: { name: string; pinned: boolean; muted: boolean; onAction: (action: string) => void; style?: React.CSSProperties }) {
   const items = [
     ['new-window', 'Open in new window', <MessageCircle size={17} />], ['archive', 'Archive', <Archive size={17} />], ['pin', pinned ? 'Unpin' : 'Pin', <Pin size={17} />], ['mute', muted ? 'Unmute' : 'Mute', <BellOff size={17} />],
     ['unread', 'Mark as unread', <Clock3 size={17} />], ['secret', 'Start secret chat', <Lock size={17} />], ['folder', 'Add to folder', <ChevronRight size={17} />], ['clear-history', 'Clear history', <Trash2 size={17} />], ['delete-chat', 'Delete chat', <Trash2 size={17} />],
   ]
-  return <div className="context-menu chat-context" role="menu">{items.map(([action, label, icon], index) => <button className={action === 'delete-chat' ? 'danger-item' : index === 6 ? 'menu-divider' : ''} key={action as string} onClick={() => onAction(action as string)}>{icon}{label}</button>)}</div>
+  return <div className="context-menu chat-context" role="menu" style={style}>{items.map(([action, label, icon], index) => <button className={action === 'delete-chat' ? 'danger-item' : index === 6 ? 'menu-divider' : ''} key={action as string} onClick={() => onAction(action as string)}>{icon}{label}</button>)}</div>
 }
 
 export function MessageContextMenu({ mine, time, onAction }: { mine: boolean; time: string; onAction: (action: string) => void }) {
@@ -114,7 +114,7 @@ export function MessageContextMenu({ mine, time, onAction }: { mine: boolean; ti
 }
 
 export function ForwardPanel({ onClose, onForward }: { onClose: () => void; onForward: (target: Exclude<ChatName, 'Mark'>) => void }) {
-  return <div className="forward-overlay" role="dialog" aria-modal="true" aria-label="Forward to">
-    <div className="forward-card"><header><button aria-label="Close forward" onClick={onClose}><X size={20} /></button><strong>Forward to…</strong></header><label><Search size={16} /><input autoFocus placeholder="Search chats" /></label>{(['Saved Messages', 'Design circle', 'Alisher'] as const).map((chat, index) => <button className="forward-chat" key={chat} onClick={() => onForward(chat)}><span className="avatar" style={{ background: ['#9e2338', '#4c8a83', '#bf8057'][index] }}>{chat[0]}</span><span><strong>{chat}</strong><small>{index === 0 ? 'Keep it for yourself' : 'Private cloud chat'}</small></span><Send size={16} /></button>)}</div>
+  return <div className="forward-overlay" role="dialog" aria-modal="true" aria-label="Forward to" onClick={onClose}>
+    <div className="forward-card" onClick={event => event.stopPropagation()}><header><button aria-label="Close forward" onClick={onClose}><X size={20} /></button><strong>Forward to…</strong></header><label><Search size={16} /><input autoFocus placeholder="Search chats" /></label>{(['Saved Messages', 'Design circle', 'Alisher'] as const).map((chat, index) => <button className="forward-chat" key={chat} onClick={() => onForward(chat)}><span className="avatar" style={{ background: ['#9e2338', '#4c8a83', '#bf8057'][index] }}>{chat[0]}</span><span><strong>{chat}</strong><small>{index === 0 ? 'Keep it for yourself' : 'Private cloud chat'}</small></span><Send size={16} /></button>)}</div>
   </div>
 }

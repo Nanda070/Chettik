@@ -1,6 +1,7 @@
 import { ArrowRight, BellOff, Check, ChevronLeft, CircleUserRound, Edit3, Flag, Forward, Lock, Menu, MessageCircle, Moon, MoreHorizontal, Paperclip, Pencil, Pin, Plus, QrCode, Search, Send, Settings, ShieldCheck, ShieldAlert, Smile, Sun, Trash2, Users, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import './App.css'
+import { API_URL, websocketUrl } from './api'
 import { SettingsDrawer } from './Stage3Panels'
 import { MediaSendSheet, type MediaExpiry, RichComposerSheet, VoiceButton } from './Stage4Panels'
 import { ChatContextMenu, ConfirmModal, type ConfirmAction, ForwardPanel, GroupPanel, MessageContextMenu, ProfilePanel } from './InteractionPanels'
@@ -35,7 +36,6 @@ export type Profile = {
   passcode?: boolean; biometrics?: boolean; twoStep?: boolean; passkeys?: boolean; loginEmail?: string
   autoDelete?: string; scheduledEnabled?: boolean; timedMedia?: boolean; viewOnce?: boolean; pushEnabled?: boolean; telemetryEnabled?: boolean
 }
-const API_URL = 'http://127.0.0.1:8787/api'
 const sessionKey = (account: Account) => `chettik-api-session-${account.email}`
 const credits = {
   ru: { dev: 'Разработчик и основатель: Nanda, Discord: nandak070, Telegram: nanda070', mark: 'Разработчик: Mark, Discord: schizophrenogenic', contact: 'Связь', all: 'Nanda · Email: adnan.huseynli1@gmail.com · Discord: nandak070 · Telegram: nanda070' },
@@ -160,7 +160,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const [groupMenuOpen, setGroupMenuOpen] = useState(false)
   const [profileAccount, setProfileAccount] = useState<Account>(seedAccounts[1])
   const [confirm, setConfirm] = useState<{ action: ConfirmAction; message?: Message } | null>(null)
-  const [chatMenu, setChatMenu] = useState(false)
+  const [chatMenu, setChatMenu] = useState<{ name: ChatName; x: number; y: number } | null>(null)
   const [messageMenu, setMessageMenu] = useState<Message | null>(null)
   const [mediaFile, setMediaFile] = useState<File | null>(null)
   const [forwardMessage, setForwardMessage] = useState<Message | null>(null)
@@ -177,6 +177,8 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const [chatListWidth, setChatListWidth] = useState(() => Number(localStorage.getItem('chettik-chat-list-width')) || 300)
   const fileInput = useRef<HTMLInputElement>(null)
   const stickerInput = useRef<HTMLInputElement>(null)
+  const resizeFrame = useRef<number | null>(null)
+  const pendingChatListWidth = useRef(chatListWidth)
   const messages = chatMessages[selectedChat] || []
   const selectedRow = chatRows.find(row => row.name === selectedChat)
   const selectedChannel = selectedRow?.channel
@@ -194,7 +196,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     setMessage('')
     setReply(null)
     setEditing(null)
-    setChatMenu(false)
+    setChatMenu(null)
   }
   const startSecretChat = (target: Account = seedAccounts[1]) => {
     const name = `Secret chat · ${target.name}`
@@ -249,7 +251,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     return () => { disposed = true }
   }, [account])
   useEffect(() => {
-    const socket = new WebSocket('ws://127.0.0.1:8787/api/ws')
+    const socket = new WebSocket(websocketUrl())
     socket.onmessage = event => {
       const payload = JSON.parse(event.data) as { type: string; message?: { id: string; chat_id: string; sender_name?: string; text?: string; kind?: MessageKind; created_at?: string } }
       const chat = chatRows.find(row => row.id === payload.message?.chat_id)
@@ -274,21 +276,43 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       .then(response => response.ok ? response.json() : undefined)
       .catch(() => undefined)
   }, [profileAccount, profileOpen, token])
-  useEffect(() => { const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setMenuOpen(false); setMenuStub(null); setMessageMenu(null); setChatMenu(false); setEmojiOpen(false) } }; window.addEventListener('keydown', closeOnEscape); return () => window.removeEventListener('keydown', closeOnEscape) }, [])
+  const closeTransient = () => {
+    setMenuOpen(false); setMenuStub(null); setMessageMenu(null); setChatMenu(null); setEmojiOpen(false)
+    setRichOpen(false); setMediaFile(null); setSettingsOpen(false); setStoryOpen(null); setProfileOpen(false)
+    setGroupOpen(false); setGroupMenuOpen(false); setChannelMenuOpen(false); setCreateChannelOpen(false)
+    setChannelInfoOpen(false); setChannelEditOpen(false); setForwardMessage(null); setConfirm(null)
+  }
   useEffect(() => {
-    const sidebar = document.querySelector<HTMLElement>('.sidebar')
-    if (!sidebar) return
-    sidebar.style.width = `${Math.max(240, Math.min(420, chatListWidth))}px`
-    const observer = new ResizeObserver(() => {
-      const width = Math.round(sidebar.getBoundingClientRect().width)
-      if (width >= 240 && width <= 420) {
-        localStorage.setItem('chettik-chat-list-width', String(width))
-        setChatListWidth(width)
-      }
-    })
-    observer.observe(sidebar)
-    return () => observer.disconnect()
-  }, [chatListWidth])
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') closeTransient() }
+    const closeOnBackdrop = (event: PointerEvent) => {
+      const target = event.target as Element | null
+      if (!target?.closest('.context-menu, .emoji-picker, .main-menu, .tg-panel, .profile-panel, .forward-card, .rich-sheet, .story-card, .confirm-card, .media-expiry-picker')) closeTransient()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    document.addEventListener('pointerdown', closeOnBackdrop, true)
+    return () => { window.removeEventListener('keydown', closeOnEscape); document.removeEventListener('pointerdown', closeOnBackdrop, true) }
+  }, [])
+  useEffect(() => () => { if (resizeFrame.current) cancelAnimationFrame(resizeFrame.current) }, [])
+  const startSidebarResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const updateWidth = (pointerEvent: PointerEvent) => {
+      pendingChatListWidth.current = Math.max(240, Math.min(420, Math.round(pointerEvent.clientX - 76)))
+      if (resizeFrame.current !== null) return
+      resizeFrame.current = requestAnimationFrame(() => {
+        setChatListWidth(pendingChatListWidth.current)
+        resizeFrame.current = null
+      })
+    }
+    const finish = () => {
+      if (resizeFrame.current !== null) { cancelAnimationFrame(resizeFrame.current); resizeFrame.current = null }
+      setChatListWidth(pendingChatListWidth.current)
+      localStorage.setItem('chettik-chat-list-width', String(pendingChatListWidth.current))
+      window.removeEventListener('pointermove', updateWidth)
+      window.removeEventListener('pointerup', finish)
+    }
+    window.addEventListener('pointermove', updateWidth)
+    window.addEventListener('pointerup', finish, { once: true })
+  }
   const addRich = (kind: MessageKind) => {
     const text = kind === 'poll' ? 'Team sync at 15:00?' : kind === 'location' ? 'Moscow Avenue · precise location' : 'A quiet moment from the studio'
     void deliver(text, kind)
@@ -315,7 +339,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
     else if (action === 'unread') setChatUnread(true)
     else if (action === 'secret') startSecretChat()
     else if (action === 'clear-history' || action === 'delete-chat') setConfirm({ action })
-    setChatMenu(false)
+    setChatMenu(null)
   }
   const handleMessageMenu = (action: string) => {
     const selected = messageMenu
@@ -376,9 +400,9 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
   const matches = messages.filter(m => m.text.toLowerCase().includes(search.toLowerCase()))
   if (page === 'admin') return <AdminPage account={account} reports={reports} clearReports={() => setReports([])} onBack={() => setPage('chat')} />
   return <div className={`app ${dark ? 'dark' : ''}`}>
-    <div className="app-shell">
+    <div className="app-shell" style={{ '--sidebar-width': `${chatListWidth}px` } as CSSProperties}>
       <nav className="rail"><img className="mark" src="/logo.svg" alt="Chettik" /><button className="rail-btn active" aria-label="Open main menu" onClick={() => setMenuOpen(true)}><Menu size={21} /></button><button className="rail-btn" aria-label="Open saved messages" onClick={() => openChat('Saved Messages')}><Pin size={19} /></button><div className="rail-spacer" />{account.role !== 'User' && <button className="rail-btn" title="Operations console" onClick={() => setPage('admin')}><ShieldAlert size={19} /></button>}<button className="avatar me" aria-label="Open my profile" title={account.name} onClick={() => { setProfileAccount(account); setProfileOpen(true) }}>{account.initials}</button></nav>
-      <aside className="sidebar"><div className="side-top"><div className="wordmark"><img src="/logo.svg" alt="" />chett<span>i</span>k</div><button className="icon-btn" aria-label="New chat"><MessageCircle size={19} /></button></div><label className="search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder={language === 'RU' ? 'Поиск сообщений' : 'Search messages'} /></label><div className="stories" aria-label={language === 'RU' ? 'Истории' : 'Stories'}>{[{ name: 'Mark', initials: 'M', color: '#6e4c97' }, { name: 'Nanda', initials: 'N', color: '#9e2338' }, { name: 'Alisher', initials: 'A', color: '#bf8057' }].map(story => <button className="story" key={story.name} onClick={() => setStoryOpen(story.name)}><span className="avatar" style={{ background: story.color }}>{story.initials}</span><span>{story.name}</span></button>)}</div><div className="list-title">Cloud chats · {matches.length} matches</div><div className="chat-list">{chatRows.map(chat => <button onClick={() => openChat(chat.name)} onContextMenu={event => { if (chat.name === 'Mark') { event.preventDefault(); setChatMenu(true) } }} className={`chat-row ${selectedChat === chat.name ? 'active' : ''}`} key={chat.id}><div className={`avatar ${chat.channel ? 'channel-avatar' : ''}`} style={{ background: chat.color }}>{chat.channel ? <MessageCircle size={18} /> : chat.initials}</div><div className="chat-copy"><div className="chat-name">{chat.name}{chat.channel ? <span className="channel-mark">CHANNEL</span> : chat.name === 'Mark' && chatPinned ? <Pin size={11} /> : null}<span className="time">{chat.time}</span></div><div className="chat-preview">{channelMuted && chat.channel && selectedChat === chat.name ? 'Muted' : chatMuted && chat.name === 'Mark' ? 'Muted' : chat.preview}</div></div>{(chat.unread || (chat.name === 'Mark' && chatUnread)) ? <span className="unread">{chat.name === 'Mark' && chatUnread ? 1 : chat.unread}</span> : null}</button>)}</div>{chatMenu && <ChatContextMenu name="Mark" pinned={chatPinned} muted={chatMuted} onAction={handleChatMenu} />}</aside>
+      <aside className="sidebar"><div className="side-top"><div className="wordmark"><img src="/logo.svg" alt="" />chett<span>i</span>k</div><button className="icon-btn" aria-label="New chat"><MessageCircle size={19} /></button></div><label className="search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder={language === 'RU' ? 'Поиск сообщений' : 'Search messages'} /></label><div className="stories" aria-label={language === 'RU' ? 'Истории' : 'Stories'}>{[{ name: 'Mark', initials: 'M', color: '#6e4c97' }, { name: 'Nanda', initials: 'N', color: '#9e2338' }, { name: 'Alisher', initials: 'A', color: '#bf8057' }].map(story => <button className="story" key={story.name} onClick={() => setStoryOpen(story.name)}><span className="avatar" style={{ background: story.color }}>{story.initials}</span><span>{story.name}</span></button>)}</div><div className="list-title">Cloud chats · {matches.length} matches</div><div className="chat-list">{chatRows.map(chat => <button onClick={() => openChat(chat.name)} onContextMenu={event => { event.preventDefault(); setChatMenu({ name: chat.name, x: event.clientX, y: event.clientY }) }} className={`chat-row ${selectedChat === chat.name ? 'active' : ''}`} key={chat.id}><div className={`avatar ${chat.channel ? 'channel-avatar' : ''}`} style={{ background: chat.color }}>{chat.channel ? <MessageCircle size={18} /> : chat.initials}</div><div className="chat-copy"><div className="chat-name">{chat.name}{chat.channel ? <span className="channel-mark">CHANNEL</span> : chat.name === 'Mark' && chatPinned ? <Pin size={11} /> : null}<span className="time">{chat.time}</span></div><div className="chat-preview">{channelMuted && chat.channel && selectedChat === chat.name ? 'Muted' : chatMuted && chat.name === 'Mark' ? 'Muted' : chat.preview}</div></div>{(chat.unread || (chat.name === 'Mark' && chatUnread)) ? <span className="unread">{chat.name === 'Mark' && chatUnread ? 1 : chat.unread}</span> : null}</button>)}</div></aside><div className="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize chat list" onPointerDown={startSidebarResize} />
       <section className="chat">
         <header className="chat-head"><button className="icon-btn mobile-menu" aria-label="Open main menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>{selectedChannel ? <><button className="icon-btn profile-open" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><div className="avatar channel-avatar" style={{ background: '#9e2338' }}><MessageCircle size={18} /></div></button><button className="chat-person profile-open" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><strong>{selectedChannel.title}</strong><span>{selectedChannel.subscriber_count} subscriber{selectedChannel.subscriber_count === 1 ? '' : 's'} · channel</span></button></> : selectedChat === 'Mark' ? <><button className="icon-btn profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><div className="avatar" style={{ background: '#6e4c97' }}>M</div></button><button className="chat-person profile-open" aria-label="Open Mark profile" onClick={() => { setProfileAccount(seedAccounts[1]); setProfileOpen(true) }}><strong>Mark <span className="badge">ADMIN</span></strong><span>online · cloud chat</span></button></> : <><div className="avatar" style={{ background: selectedChat === 'Saved Messages' ? account.color : chatRows.find(chat => chat.name === selectedChat)?.color }}>{selectedChat === 'Saved Messages' ? account.initials : selectedChat[0]}</div><button className="chat-person profile-open" onClick={() => selectedChat === 'Design circle' && setGroupOpen(true)}><strong>{selectedChat}</strong><span>{selectedChat === 'Saved Messages' ? 'Messages saved for yourself' : selectedChat === 'Design circle' ? '3 members · group chat' : 'cloud chat'}</span></button></>}<div className="head-actions">{selectedChannel && <><button className="icon-btn" aria-label="Open channel info" onClick={() => setChannelInfoOpen(true)}><Users size={19} /></button><button className="icon-btn" aria-label="Open channel menu" onClick={() => setChannelMenuOpen(true)}><MoreHorizontal size={19} /></button></>}{selectedChat === 'Design circle' && <button className="icon-btn" aria-label="Open group menu" onClick={() => setGroupMenuOpen(true)}><MoreHorizontal size={19} /></button>}<button className="icon-btn" title="Switch language" onClick={onLanguage}>{language}</button><button className="icon-btn" aria-label="Toggle theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header>
         <div className="mobile-stories stories" aria-label={language === 'RU' ? 'Истории' : 'Stories'}>{[{ name: 'Mark', initials: 'M', color: '#6e4c97' }, { name: 'Nanda', initials: 'N', color: '#9e2338' }, { name: 'Alisher', initials: 'A', color: '#bf8057' }].map(story => <button className="story" key={story.name} onClick={() => setStoryOpen(story.name)}><span className="avatar" style={{ background: story.color }}>{story.initials}</span><span>{story.name}</span></button>)}</div>
@@ -406,6 +430,7 @@ function Messenger({ account, dark, setDark, language, onLanguage, onLogout }: M
       {channelEditOpen && selectedChannel && <ChannelForm channel={selectedChannel} token={token} onClose={() => setChannelEditOpen(false)} onSaved={channel => { setChannels(values => values.map(value => value.id === channel.id ? channel : value)); setChatRows(values => values.map(row => row.id === channel.chat_id ? { ...row, name: channel.title, channel } : row)); if (selectedChat !== channel.title) setSelectedChat(channel.title); setChannelEditOpen(false) }} />}
       {menuOpen && <div className="menu-overlay" onClick={() => { setMenuOpen(false); setMenuStub(null) }}><aside className="main-menu telegram-menu" onClick={e => e.stopPropagation()}>{menuStub ? <><header className="menu-stub-head"><button aria-label="Back to main menu" onClick={() => setMenuStub(null)}><ChevronLeft size={19} /></button><strong>{menuStub}</strong><button aria-label="Close menu" onClick={() => { setMenuOpen(false); setMenuStub(null) }}><X size={18} /></button></header><div className="menu-stub-body"><div className="menu-stub-icon"><MessageCircle size={25} /></div><h3>{menuStub}</h3><p>{menuStub === 'Contacts' ? 'Your trusted contacts will appear here. Import stays on-device in this privacy-first messenger.' : `${menuStub} is ready as a focused Chettik messenger flow.`}</p><button onClick={() => setMenuStub(null)}>Back to menu</button></div></> : <><button className="menu-close" aria-label="Close menu" onClick={() => setMenuOpen(false)}><X size={18} /></button><button className="menu-user" onClick={() => { setMenuOpen(false); setProfileAccount(account); setProfileOpen(true) }}><div className="avatar" style={{ background: account.color }}>{account.initials}</div><span><strong>{account.name}</strong><small>Set emoji status · {account.username}</small></span><ArrowRight size={17} /></button><div className="menu-links"><button onClick={() => { setMenuOpen(false); setProfileAccount(account); setProfileOpen(true) }}><CircleUserRound size={19} />My Profile</button><button onClick={() => setMenuStub('New Group')}><Users size={19} />New Group</button><button onClick={() => { setMenuOpen(false); setCreateChannelOpen(true) }}><MessageCircle size={19} />New Channel</button><button onClick={() => setMenuStub('Contacts')}><Users size={19} />Contacts</button><button onClick={() => { setMenuOpen(false); openChat('Saved Messages') }}><Pin size={19} />Saved Messages</button><button onClick={() => { setMenuOpen(false); setSettingsOpen(true) }}><Settings size={19} />Settings</button></div><button className="night-row" onClick={() => setDark(!dark)}><span>{dark ? <Moon size={19} /> : <Sun size={19} />}{dark ? 'Night Mode' : 'Day Mode'}</span><span className={`switch ${dark ? 'on' : ''}`}><i /></span></button><footer>Chettik Web<br /><small>Private by instinct</small></footer></>}</aside></div>}
     </div>
+      {chatMenu && <div className="floating-dismiss" onClick={() => setChatMenu(null)}><div onClick={event => event.stopPropagation()}><ChatContextMenu name={chatMenu.name} pinned={chatPinned} muted={chatMuted} onAction={handleChatMenu} style={{ left: chatMenu.x, top: chatMenu.y }} /></div></div>}
   </div>
 }
 

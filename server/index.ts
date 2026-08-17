@@ -145,7 +145,15 @@ function clientIp(request: express.Request) {
 }
 const app = express()
 app.use(express.json({ limit: '7mb' }))
-app.use((_, response, next) => { response.setHeader('Access-Control-Allow-Origin', 'http://127.0.0.1:5173'); response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS'); next() })
+const allowedOrigins = (process.env.API_ALLOWED_ORIGINS || 'http://127.0.0.1:5173').split(',').map(origin => origin.trim()).filter(Boolean)
+app.use((request, response, next) => {
+  const origin = request.header('origin')
+  if (origin && allowedOrigins.includes(origin)) response.setHeader('Access-Control-Allow-Origin', origin)
+  response.setHeader('Vary', 'Origin')
+  response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS')
+  next()
+})
 app.options('/api/{*path}', (_, response) => response.sendStatus(204))
 
 function session(request: express.Request): SessionUser | undefined {
@@ -494,4 +502,5 @@ app.post('/api/chats/:chatId/messages', (request, response) => {
 })
 
 const port = Number(process.env.API_PORT || 8787)
-httpServer.listen(port, '127.0.0.1', () => console.log(`Chettik API listening on http://127.0.0.1:${port}`))
+const host = process.env.API_HOST || '127.0.0.1'
+httpServer.listen(port, host, () => console.log(`Chettik API listening on http://${host}:${port}`))
